@@ -39,9 +39,10 @@ public sealed class BinaryExpressionNode(ExpressionNode left, string op, Express
     public ExpressionNode Right { get; } = right;
 }
 
-public sealed class PrintStatementNode(ExpressionNode expression) : StatementNode
+public sealed class PrintStatementNode(ExpressionNode expression, bool appendNewLine = false) : StatementNode
 {
     public ExpressionNode Expression { get; } = expression;
+    public bool AppendNewLine { get; } = appendNewLine;
 }
 
 public sealed class VariableDeclarationNode(string type, string name, ExpressionNode initializer) : StatementNode
@@ -66,4 +67,9 @@ public sealed class ExpressionStatementNode(ExpressionNode expression) : Stateme
 public sealed class ReturnStatementNode(ExpressionNode value) : StatementNode
 {
     public ExpressionNode Value { get; } = value;
+}
+
+public sealed class CharacterLiteralNode(string value) : ExpressionNode
+{
+    public string Value { get; } = value;
 }

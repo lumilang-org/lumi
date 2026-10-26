@@ -1,5 +1,6 @@
 using LLVMSharp.Interop;
 using Lumi.Core.Ast;
+using Lumi.Core.Semantics;
 using Lumi.LLVM.Utils;
 
 namespace Lumi.LLVM.CodeGenerator;
@@ -9,16 +10,18 @@ public sealed class Codegen
     private readonly LLVMBuilderRef _builder;
     private readonly LLVMContextRef _context;
     private readonly LLVMModuleRef _module;
+    private readonly SemanticModel _semanticModel;
     private readonly Dictionary<string, VariableSymbol> _variables = new();
 
     // Track the return type of the function currently being generated
     private LLVMTypeRef _currentReturnType;
 
-    public Codegen(string moduleName)
+    public Codegen(string moduleName, SemanticModel semanticModel)
     {
         _context = LLVMContextRef.Create();
         _module = _context.CreateModuleWithName(moduleName);
         _builder = _context.CreateBuilder();
+        _semanticModel = semanticModel;
 
         LLVMSharp.Interop.LLVM.InitializeNativeTarget();
         LLVMSharp.Interop.LLVM.InitializeNativeAsmPrinter();
@@ -121,9 +124,29 @@ public sealed class Codegen
 
                 _builder.BuildRet(returnValue);
                 break;
+
             case PrintStatementNode printStmt:
                 var printValue = GenerateExpression(printStmt.Expression);
-                WriterUtils.EmitPrintInt(printValue, _module, _context, _builder);
+                var expressionType = _semanticModel.GetExpressionType(printStmt.Expression);
+
+                switch (expressionType)
+                {
+                    case "char":
+                        WriterUtils.EmitPrintChar(printValue, _module, _context, _builder);
+                        break;
+                    case "i8" or "i16" or "i32" or "i64"
+                        or "u8" or "u16" or "u32" or "u64":
+                        WriterUtils.EmitPrintInt(printValue, _module, _context, _builder);
+                        break;
+                    default:
+                        throw new NotSupportedException(
+                            $"Printing values of type '{expressionType}' is not supported.");
+                }
+
+                if (printStmt.AppendNewLine)
+                    WriterUtils.EmitSystemWrite(
+                        "\n", _module, _context, _builder);
+
                 break;
         }
     }
@@ -137,7 +160,7 @@ public sealed class Codegen
             IdentifierNode id => LoadVariable(id.Name),
             BinaryExpressionNode binary => GenerateBinary(binary),
             UnaryExpressionNode unary => GenerateUnary(unary),
-
+            CharacterLiteralNode character => LLVMValueRef.CreateConstInt(_context.Int8Type, character.Value[0]),
             _ => throw new Exception("Unknown IR generation node target.")
         };
     }
@@ -215,6 +238,7 @@ public sealed class Codegen
             "i16" or "u16" => _context.Int16Type,
             "i32" or "u32" => _context.Int32Type,
             "i64" or "u64" => _context.Int64Type,
+            "char" => _context.Int8Type,
             "void" => _context.VoidType,
 
             _ => throw new Exception(

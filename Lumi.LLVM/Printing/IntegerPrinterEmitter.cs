@@ -1,4 +1,3 @@
-
 using LLVMSharp.Interop;
 using Lumi.LLVM.Utils;
 
@@ -31,11 +30,8 @@ internal sealed class IntegerPrintEmitter(
         var pointerSlot = builder.BuildAlloca(bytePointerType, "itoa_ptr");
         var valueSlot = builder.BuildAlloca(i32, "itoa_value");
 
-        var newlinePointer = buffer.BytePointer(
-            PrintBuffer.Size - 1, "itoa_newline_ptr");
-
         var lastDigitPointer = buffer.BytePointer(
-            PrintBuffer.Size - 2, "itoa_last_digit_ptr");
+            PrintBuffer.Size - 1, "itoa_last_digit_ptr");
 
         builder.BuildStore(lastDigitPointer, pointerSlot);
 
@@ -76,7 +72,7 @@ internal sealed class IntegerPrintEmitter(
 
         var asciiDigit = builder.BuildAdd(
             digit,
-            LLVMValueRef.CreateConstInt(i32, (ulong)'0'),
+            LLVMValueRef.CreateConstInt(i32, '0'),
             "itoa_digit_ascii");
 
         var digitByte = builder.BuildTrunc(
@@ -129,7 +125,7 @@ internal sealed class IntegerPrintEmitter(
         builder.PositionAtEnd(signBlock);
 
         builder.BuildStore(
-            LLVMValueRef.CreateConstInt(i8, (ulong)'-'),
+            LLVMValueRef.CreateConstInt(i8, '-'),
             digitsStartMinusOne);
 
         builder.BuildBr(outputBlock);
@@ -146,17 +142,18 @@ internal sealed class IntegerPrintEmitter(
             new[] { afterDigitsBlock, signBlock },
             2);
 
-        // Calculate the number of bytes from outputStart to the newline,
-        // including the newline itself.
+        // Calculate the number of bytes to write, excluding a newline.
         var startAddress = builder.BuildPtrToInt(
             outputStart, i64, "itoa_start_addr");
 
         var endAddress = builder.BuildPtrToInt(
-            newlinePointer, i64, "itoa_end_addr");
+            lastDigitPointer, i64, "itoa_end_addr");
 
         var length = builder.BuildAdd(
             builder.BuildSub(
-                endAddress, startAddress, "itoa_length_without_newline"),
+                endAddress,
+                startAddress,
+                "itoa_length_without_last_digit"),
             LLVMValueRef.CreateConstInt(i64, 1),
             "itoa_length");
 

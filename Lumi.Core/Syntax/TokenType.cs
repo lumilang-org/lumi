@@ -6,7 +6,7 @@ public enum TokenType
     KeywordFunc,
     KeywordReturn,
     PrintFunc,
-    
+
     TypeByte,
     TypeBool,
     TypeVoid,
@@ -14,15 +14,16 @@ public enum TokenType
     TypeI16,
     TypeI32,
     TypeI64,
-    
+
     TypeU16,
     TypeU32,
     TypeU64,
-    
+
     Identifier,
     Number,
+    Character, // Char literal
     BooleanLiteral,
-    
+
     Assign,
     Plus,
     Minus,
@@ -35,9 +36,8 @@ public enum TokenType
     RParen,
     LBracket,
     RBracket,
-    
+
     //Special
     EndOfFile,
     Unknown
-    
 }

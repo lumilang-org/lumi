@@ -93,6 +93,19 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
                 var initializer = ParseExpression();
                 return new VariableDeclarationNode(type, name, initializer);
             }
+            case TokenType.TypeChar:
+            {
+                var type = Current.Value;
+                Advance();
+
+                var name = Current.Value;
+                Consume(TokenType.Identifier);
+                Consume(TokenType.Assign);
+
+                var initializer = ParseExpression();
+
+                return new VariableDeclarationNode(type, name, initializer);
+            }
             case TokenType.KeywordReturn:
             {
                 Consume(TokenType.KeywordReturn);
@@ -102,6 +115,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
             }
             case TokenType.PrintFunc:
             {
+                var appendNewline = Current.Value == "println";
+
                 Consume(TokenType.PrintFunc);
                 Consume(TokenType.LParen);
 
@@ -109,7 +124,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
 
                 Consume(TokenType.RParen);
 
-                return new PrintStatementNode(expression);
+                return new PrintStatementNode(expression, appendNewline);
             }
             default:
             {
@@ -141,8 +156,16 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
             TokenType.Number => ParseNumberLiteral(),
             TokenType.Identifier => ParseIdentifier(),
             TokenType.Minus => ParseUnaryExpression(),
+            TokenType.Character => ParseCharLiteral(),
             _ => throw new Exception($"Syntax Error: Unexpected prefix token {Current.Type}")
         };
+    }
+
+    private ExpressionNode ParseCharLiteral()
+    {
+        var node = new CharacterLiteralNode(Current.Value);
+        Advance();
+        return node;
     }
 
     private ExpressionNode ParseUnaryExpression()

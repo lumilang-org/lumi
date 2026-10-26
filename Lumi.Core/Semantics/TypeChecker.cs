@@ -5,6 +5,8 @@ namespace Lumi.Core.Semantics;
 
 public sealed class TypeChecker
 {
+    public SemanticModel SemanticModel { get; } = new();
+
     public void CheckFunction(FunctionDeclarationNode func)
     {
         // Create a new local scope for the function body
@@ -45,24 +47,38 @@ public sealed class TypeChecker
                     throw new Exception(
                         $"Type Mismatch: Function expects to return '{expectedReturnType}' but got '{actualReturnType}' instead.");
                 break;
+            case PrintStatementNode printStmt:
+                CheckExpression(printStmt.Expression, scope);
+                break;
         }
     }
 
     private string CheckExpression(ExpressionNode expression, SymbolTable scope)
     {
-        return expression switch
+        var type = expression switch
         {
-            NumberLiteralNode node => InferBoundsUtils.InferNumericBounds(node),
+            NumberLiteralNode node =>
+                InferBoundsUtils.InferNumericBounds(node),
 
-            // Lookup identifiers inside our active tracking scope
-            IdentifierNode id => scope.Lookup(id.Name),
+            IdentifierNode id =>
+                scope.Lookup(id.Name),
 
-            // Enforce safe math evaluation
-            BinaryExpressionNode binary => CheckBinaryExpression(binary, scope),
-            UnaryExpressionNode unary => CheckUnaryExpression(unary, scope),
+            BinaryExpressionNode binary =>
+                CheckBinaryExpression(binary, scope),
 
-            _ => throw new Exception("Unknown expression type encountered during analysis.")
+            UnaryExpressionNode unary =>
+                CheckUnaryExpression(unary, scope),
+
+            CharacterLiteralNode =>
+                "char",
+
+            _ => throw new Exception(
+                "Unknown expression type encountered during analysis.")
         };
+
+        SemanticModel.SetExpressionType(expression, type);
+
+        return type;
     }
 
     private string CheckUnaryExpression(UnaryExpressionNode unary, SymbolTable scope)
@@ -100,6 +116,8 @@ public sealed class TypeChecker
 
         if (expression is NumberLiteralNode literal && IsIntegerType(targetType))
             return FitsInType(literal.Value, targetType);
+
+        if (targetType == "char" && expression is CharacterLiteralNode _) return true;
 
         if (expression is UnaryExpressionNode
             {

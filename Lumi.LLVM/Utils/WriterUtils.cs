@@ -32,19 +32,40 @@ public static class WriterUtils
         return (function, functionType);
     }
 
-    public static void EmitSystemWrite(
+    internal static void EmitPrintInt(
+        LLVMValueRef valueToPrint,
+        LLVMModuleRef module,
+        LLVMContextRef context,
+        LLVMBuilderRef builder)
+    {
+        new IntegerPrintEmitter(module, context, builder)
+            .Emit(valueToPrint);
+    }
+
+    internal static void EmitPrintChar(
+        LLVMValueRef valueToPrint,
+        LLVMModuleRef module,
+        LLVMContextRef context,
+        LLVMBuilderRef builder)
+    {
+        new CharacterPrintEmitter(module, context, builder)
+            .Emit(valueToPrint);
+    }
+
+    internal static void EmitSystemWrite(
         string message,
         LLVMModuleRef module,
         LLVMContextRef context,
         LLVMBuilderRef builder)
     {
-        var (function, functionType) = GetOrInsertWrite(module, context);
+        var (function, functionType) = GetOrInsertWrite(
+            module, context);
 
-        var messagePointer = builder.BuildGlobalStringPtr(message, "str_lit");
+        var messagePointer = builder.BuildGlobalStringPtr(
+            message, "str_lit");
 
         var stdout = LLVMValueRef.CreateConstInt(
-            context.Int32Type,
-            StdoutFileDescriptor);
+            context.Int32Type, 1);
 
         var length = LLVMValueRef.CreateConstInt(
             context.Int64Type,
@@ -55,15 +76,5 @@ public static class WriterUtils
             function,
             new[] { stdout, messagePointer, length },
             "write_call");
-    }
-
-    public static void EmitPrintInt(
-        LLVMValueRef valueToPrint,
-        LLVMModuleRef module,
-        LLVMContextRef context,
-        LLVMBuilderRef builder)
-    {
-        new IntegerPrintEmitter(module, context, builder)
-            .Emit(valueToPrint);
     }
 }

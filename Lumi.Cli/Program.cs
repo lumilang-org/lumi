@@ -15,9 +15,11 @@ var lumiCode = @"
                 print(a + b)
 
                 i32 variable = -200
-                i32 variable2 = -300
-                
-                print(variable + variable2)
+                i32 variable2 = -300              
+                println(variable + variable2)
+
+                char letter = 'A'
+                println(letter)
             }
         ";
 
@@ -42,7 +44,7 @@ var checker = new TypeChecker();
 checker.CheckFunction(programAst);
 
 Console.WriteLine("\n--- Emitting Native LLVM IR ---");
-var generator = new Codegen("LumiModule");
+var generator = new Codegen("LumiModule", checker.SemanticModel);
 generator.GenerateFunction(programAst);
 
 generator.DumpModuleToConsole();
