@@ -9,11 +9,7 @@ public sealed class Codegen
     private readonly LLVMBuilderRef _builder;
     private readonly LLVMContextRef _context;
     private readonly LLVMModuleRef _module;
-    private readonly Dictionary<string, string> _namedTypeNames = new();
-    private readonly Dictionary<string, LLVMTypeRef> _namedTypes = new();
-
-    // Map tracking variable references to their stack allocations (Alloca)
-    private readonly Dictionary<string, LLVMValueRef> _namedValues = new();
+    private readonly Dictionary<string, VariableSymbol> _variables = new();
 
     // Track the return type of the function currently being generated
     private LLVMTypeRef _currentReturnType;
@@ -39,9 +35,7 @@ public sealed class Codegen
         _builder.PositionAtEnd(entryBlock);
 
         // Clear local scope variables for the new function
-        _namedValues.Clear();
-        _namedTypes.Clear();
-        _namedTypeNames.Clear();
+        _variables.Clear();
 
         // Track if a return statement was generated
         var hasReturned = false;
@@ -94,16 +88,17 @@ public sealed class Codegen
                     varDecl.Type,
                     $"init_{varDecl.Name}");
 
-                // 4. Allocate storage and store the converted value.
+                // Allocate storage and store the converted value.
                 var alloca = _builder.BuildAlloca(
                     declaredType,
                     varDecl.Name);
 
                 _builder.BuildStore(initializer, alloca);
 
-                _namedValues[varDecl.Name] = alloca;
-                _namedTypes[varDecl.Name] = declaredType;
-                _namedTypeNames[varDecl.Name] = varDecl.Type;
+                _variables[varDecl.Name] = new VariableSymbol(
+                    varDecl.Type,
+                    declaredType,
+                    alloca);
 
                 break;
             }
@@ -137,17 +132,11 @@ public sealed class Codegen
     {
         return expression switch
         {
-            NumberLiteralNode num =>
-                LLVMValueRef.CreateConstInt(NumberConverterUtils.TranslateIntLiteral(num), ulong.Parse(num.Value)),
-
-            IdentifierNode id =>
-                LoadVariable(id.Name),
-
-            BinaryExpressionNode binary =>
-                GenerateBinary(binary),
-
-            UnaryExpressionNode unary =>
-                GenerateUnary(unary),
+            NumberLiteralNode num => LLVMValueRef.CreateConstInt(NumberConverterUtils.TranslateIntLiteral(num),
+                ulong.Parse(num.Value)),
+            IdentifierNode id => LoadVariable(id.Name),
+            BinaryExpressionNode binary => GenerateBinary(binary),
+            UnaryExpressionNode unary => GenerateUnary(unary),
 
             _ => throw new Exception("Unknown IR generation node target.")
         };
@@ -173,9 +162,8 @@ public sealed class Codegen
 
     private LLVMValueRef LoadVariable(string name)
     {
-        if (_namedValues.TryGetValue(name, out var alloca) &&
-            _namedTypes.TryGetValue(name, out var type))
-            return _builder.BuildLoad2(type, alloca, name);
+        if (_variables.TryGetValue(name, out var variable))
+            return _builder.BuildLoad2(variable.LLVMType, variable.Allocation, name);
 
         throw new Exception(
             $"Compiler Error: Undefined identifier '{name}' reached backend.");
@@ -339,20 +327,12 @@ public sealed class Codegen
             return _builder.BuildZExt(value, targetType, name);
 
         // For variables, preserve their declared signedness.
-        if (expression is IdentifierNode identifier &&
-            _namedTypeNames.TryGetValue(
-                identifier.Name,
-                out var sourceTypeName))
-            return IsUnsignedIntegerType(sourceTypeName)
+        if (expression is IdentifierNode identifier && _variables.TryGetValue(identifier.Name, out var variable))
+            return variable.IsUnsignedIntegerType()
                 ? _builder.BuildZExt(value, targetType, name)
                 : _builder.BuildSExt(value, targetType, name);
 
         // Fallback for integer expressions.
         return _builder.BuildSExt(value, targetType, name);
-    }
-
-    private static bool IsUnsignedIntegerType(string typeName)
-    {
-        return typeName is "u8" or "u16" or "u32" or "u64";
     }
 }

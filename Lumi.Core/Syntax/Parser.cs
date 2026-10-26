@@ -74,7 +74,6 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
     {
         switch (Current.Type)
         {
-            // Simple type token routing for variable declarations (e.g., i16 a = 10)
             case
                 TokenType.TypeI16 or
                 TokenType.TypeI32 or
