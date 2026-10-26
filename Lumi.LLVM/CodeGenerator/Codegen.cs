@@ -9,6 +9,7 @@ public sealed class Codegen
     private readonly LLVMBuilderRef _builder;
     private readonly LLVMContextRef _context;
     private readonly LLVMModuleRef _module;
+    private readonly Dictionary<string, string> _namedTypeNames = new();
     private readonly Dictionary<string, LLVMTypeRef> _namedTypes = new();
 
     // Map tracking variable references to their stack allocations (Alloca)
@@ -40,6 +41,7 @@ public sealed class Codegen
         // Clear local scope variables for the new function
         _namedValues.Clear();
         _namedTypes.Clear();
+        _namedTypeNames.Clear();
 
         // Track if a return statement was generated
         var hasReturned = false;
@@ -78,14 +80,21 @@ public sealed class Codegen
         {
             case VariableDeclarationNode varDecl:
             {
+                // 1. Resolve the declared type.
                 var declaredType = ResolveType(varDecl.Type);
+
+                // 2. Generate the initializer.
                 var initializer = GenerateExpression(varDecl.Initializer);
 
-                initializer = CastInteger(
+                // 3. Convert it to the declared type before storing.
+                initializer = CastInitializer(
                     initializer,
+                    varDecl.Initializer,
                     declaredType,
+                    varDecl.Type,
                     $"init_{varDecl.Name}");
 
+                // 4. Allocate storage and store the converted value.
                 var alloca = _builder.BuildAlloca(
                     declaredType,
                     varDecl.Name);
@@ -94,10 +103,10 @@ public sealed class Codegen
 
                 _namedValues[varDecl.Name] = alloca;
                 _namedTypes[varDecl.Name] = declaredType;
+                _namedTypeNames[varDecl.Name] = varDecl.Type;
 
                 break;
             }
-
 
             case ExpressionStatementNode exprStmt:
                 GenerateExpression(exprStmt.Expression);
@@ -194,11 +203,14 @@ public sealed class Codegen
     {
         return typeName switch
         {
-            "i16" => _context.Int16Type,
-            "i32" => _context.Int32Type,
-            "i64" => _context.Int64Type,
+            "i8" or "u8" => _context.Int8Type,
+            "i16" or "u16" => _context.Int16Type,
+            "i32" or "u32" => _context.Int32Type,
+            "i64" or "u64" => _context.Int64Type,
             "void" => _context.VoidType,
-            _ => throw new Exception($"Unsupported backend data primitive type: {typeName}")
+
+            _ => throw new Exception(
+                $"Unsupported backend data primitive type: {typeName}")
         };
     }
 
@@ -270,5 +282,57 @@ public sealed class Codegen
             value,
             targetType,
             name);
+    }
+
+
+    private LLVMValueRef CastInitializer(
+        LLVMValueRef value,
+        ExpressionNode expression,
+        LLVMTypeRef targetType,
+        string targetTypeName,
+        string name)
+    {
+        var sourceType = value.TypeOf;
+
+        if (sourceType.Kind != LLVMTypeKind.LLVMIntegerTypeKind ||
+            targetType.Kind != LLVMTypeKind.LLVMIntegerTypeKind)
+        {
+            if (sourceType == targetType)
+                return value;
+
+            throw new NotSupportedException(
+                $"Cannot convert initializer to '{targetTypeName}'.");
+        }
+
+        var sourceWidth = sourceType.IntWidth;
+        var targetWidth = targetType.IntWidth;
+
+        if (sourceWidth == targetWidth)
+            return value;
+
+        if (sourceWidth > targetWidth)
+            return _builder.BuildTrunc(value, targetType, name);
+
+        // Integer literals currently represent non-negative values.
+        // Their magnitude is preserved by zero extension.
+        if (expression is NumberLiteralNode)
+            return _builder.BuildZExt(value, targetType, name);
+
+        // For variables, preserve their declared signedness.
+        if (expression is IdentifierNode identifier &&
+            _namedTypeNames.TryGetValue(
+                identifier.Name,
+                out var sourceTypeName))
+            return IsUnsignedIntegerType(sourceTypeName)
+                ? _builder.BuildZExt(value, targetType, name)
+                : _builder.BuildSExt(value, targetType, name);
+
+        // Fallback for integer expressions.
+        return _builder.BuildSExt(value, targetType, name);
+    }
+
+    private static bool IsUnsignedIntegerType(string typeName)
+    {
+        return typeName is "u8" or "u16" or "u32" or "u64";
     }
 }

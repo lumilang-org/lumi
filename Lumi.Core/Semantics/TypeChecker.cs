@@ -1,3 +1,4 @@
+using System.Globalization;
 using Lumi.Core.Ast;
 
 namespace Lumi.Core.Semantics;
@@ -20,10 +21,10 @@ public sealed class TypeChecker
                 // Check the type of the assignment value
                 var initializerType = CheckExpression(varDecl.Initializer, scope);
 
-                // For a simple language, enforce strict type matching
-                if (varDecl.Type != initializerType)
+                if (!CanAssign(varDecl.Type, initializerType, varDecl.Initializer))
                     throw new Exception(
-                        $"Type Mismatch: Cannot assign type '{initializerType}' to a variable of type '{varDecl.Type}'");
+                        $"Type Mismatch: Cannot assign type '{initializerType}' " +
+                        $"to a variable of type '{varDecl.Type}'");
 
                 // Register variable in the current local scope
                 scope.Declare(varDecl.Name, varDecl.Type);
@@ -68,5 +69,46 @@ public sealed class TypeChecker
                 $"Type Mismatch: Operator '{binary.Operator}' cannot be applied to types '{leftType}' and '{rightType}'");
 
         return leftType; // e.g. i16 + i16 yields an i16
+    }
+
+    private static bool CanAssign(string targetType, string sourceType, ExpressionNode expression)
+    {
+        if (targetType == sourceType) return true;
+
+        if (expression is NumberLiteralNode literal && IsIntegerType(targetType))
+            return FitsInType(literal.Value, targetType);
+
+        return false;
+    }
+
+    private static bool IsIntegerType(string type)
+    {
+        return type is "i8" or "i16" or "i32" or "i64"
+            or "u8" or "u16" or "u32" or "u64";
+    }
+
+    private static bool FitsInType(string value, string type)
+    {
+        if (!ulong.TryParse(
+                value,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out var unsignedValue))
+            return false;
+
+        return type switch
+        {
+            "u8" => unsignedValue <= byte.MaxValue,
+            "u16" => unsignedValue <= ushort.MaxValue,
+            "u32" => unsignedValue <= uint.MaxValue,
+            "u64" => true,
+
+            "i8" => unsignedValue <= (ulong)sbyte.MaxValue,
+            "i16" => unsignedValue <= (ulong)short.MaxValue,
+            "i32" => unsignedValue <= int.MaxValue,
+            "i64" => unsignedValue <= long.MaxValue,
+
+            _ => false
+        };
     }
 }
