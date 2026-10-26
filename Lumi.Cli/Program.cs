@@ -9,13 +9,14 @@ var lumiCode = @"
                 print(5)
                 print(56789)
 
-                i16 a = 30
-                i16 b = 10
+                u16 a = 30
+                u16 b = 10
 
                 print(a + b)
 
-                u32 variable = 12000
-                u32 variable2 = 12000
+                i32 variable = -200
+                i32 variable2 = -300
+                
                 print(variable + variable2)
             }
         ";

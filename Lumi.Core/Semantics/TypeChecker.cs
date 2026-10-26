@@ -21,6 +21,11 @@ public sealed class TypeChecker
                 // Check the type of the assignment value
                 var initializerType = CheckExpression(varDecl.Initializer, scope);
 
+                if (varDecl.Type.StartsWith('u') &&
+                    varDecl.Initializer is UnaryExpressionNode { Operator: "-" })
+                    throw new Exception(
+                        $"Type Mismatch: Cannot assign a negative value to unsigned type '{varDecl.Type}'.");
+
                 if (!CanAssign(varDecl.Type, initializerType, varDecl.Initializer))
                     throw new Exception(
                         $"Type Mismatch: Cannot assign type '{initializerType}' " +
@@ -54,8 +59,26 @@ public sealed class TypeChecker
 
             // Enforce safe math evaluation
             BinaryExpressionNode binary => CheckBinaryExpression(binary, scope),
+            UnaryExpressionNode unary => CheckUnaryExpression(unary, scope),
 
             _ => throw new Exception("Unknown expression type encountered during analysis.")
+        };
+    }
+
+    private string CheckUnaryExpression(UnaryExpressionNode unary, SymbolTable scope)
+    {
+        var operandType = CheckExpression(unary.Operand, scope);
+
+        return unary.Operator switch
+        {
+            "-" when operandType is "i8" or "i16" or "i32" or "i64"
+                => operandType,
+
+            "-" => throw new Exception(
+                $"Type Mismatch: Unary '-' cannot be applied to type '{operandType}'."),
+
+            _ => throw new Exception(
+                $"Unsupported unary operator: '{unary.Operator}'.")
         };
     }
 
@@ -77,6 +100,14 @@ public sealed class TypeChecker
 
         if (expression is NumberLiteralNode literal && IsIntegerType(targetType))
             return FitsInType(literal.Value, targetType);
+
+        if (expression is UnaryExpressionNode
+            {
+                Operator: "-",
+                Operand: NumberLiteralNode lit
+            }
+            && targetType is "i8" or "i16" or "i32" or "i64")
+            return NegativeLiteralFitsInType(lit.Value, targetType);
 
         return false;
     }
@@ -108,6 +139,25 @@ public sealed class TypeChecker
             "i32" => unsignedValue <= int.MaxValue,
             "i64" => unsignedValue <= long.MaxValue,
 
+            _ => false
+        };
+    }
+
+    private static bool NegativeLiteralFitsInType(string value, string type)
+    {
+        if (!ulong.TryParse(
+                value,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out var magnitude))
+            return false;
+
+        return type switch
+        {
+            "i8" => magnitude <= 128,
+            "i16" => magnitude <= 32768,
+            "i32" => magnitude <= 2147483648UL,
+            "i64" => magnitude <= 9223372036854775808UL,
             _ => false
         };
     }

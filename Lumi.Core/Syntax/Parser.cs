@@ -61,7 +61,9 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
         Consume(TokenType.LBrace);
 
         var body = new List<StatementNode>();
-        while (Current.Type != TokenType.RBrace && Current.Type != TokenType.EndOfFile) body.Add(ParseStatement());
+        while (Current.Type != TokenType.RBrace && Current.Type != TokenType.EndOfFile)
+            body
+                .Add(ParseStatement());
 
         Consume(TokenType.RBrace);
 
@@ -73,7 +75,13 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
         switch (Current.Type)
         {
             // Simple type token routing for variable declarations (e.g., i16 a = 10)
-            case TokenType.TypeI16 or TokenType.TypeI32 or TokenType.TypeI64 or TokenType.TypeVoid:
+            case
+                TokenType.TypeI16 or
+                TokenType.TypeI32 or
+                TokenType.TypeI64 or
+                TokenType.TypeU16 or
+                TokenType.TypeU32 or
+                TokenType.TypeU64:
             {
                 var type = Current.Value;
                 Advance(); // Consume the type keyword
@@ -133,8 +141,18 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
         {
             TokenType.Number => ParseNumberLiteral(),
             TokenType.Identifier => ParseIdentifier(),
+            TokenType.Minus => ParseUnaryExpression(),
             _ => throw new Exception($"Syntax Error: Unexpected prefix token {Current.Type}")
         };
+    }
+
+    private ExpressionNode ParseUnaryExpression()
+    {
+        var op = Current.Value;
+        Advance();
+
+        var operand = ParseExpression(Precedence.Sum);
+        return new UnaryExpressionNode(op, operand);
     }
 
     private ExpressionNode ParseInfix(ExpressionNode left)

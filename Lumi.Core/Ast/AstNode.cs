@@ -14,10 +14,17 @@ public abstract class StatementNode : ASTNode
 {
 }
 
-// Specific Nodes based on your example code:
 public sealed class NumberLiteralNode(string value) : ExpressionNode
 {
     public string Value { get; } = value;
+}
+
+public sealed class UnaryExpressionNode(
+    string @operator,
+    ExpressionNode operand) : ExpressionNode
+{
+    public string Operator { get; } = @operator;
+    public ExpressionNode Operand { get; } = operand;
 }
 
 public sealed class IdentifierNode(string name) : ExpressionNode

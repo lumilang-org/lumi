@@ -146,7 +146,27 @@ public sealed class Codegen
             BinaryExpressionNode binary =>
                 GenerateBinary(binary),
 
+            UnaryExpressionNode unary =>
+                GenerateUnary(unary),
+
             _ => throw new Exception("Unknown IR generation node target.")
+        };
+    }
+
+    private LLVMValueRef GenerateUnary(UnaryExpressionNode unary)
+    {
+        var operand = GenerateExpression(unary.Operand);
+
+        return unary.Operator switch
+        {
+            "-" when operand.TypeOf.Kind == LLVMTypeKind.LLVMIntegerTypeKind
+                => _builder.BuildNeg(operand, "negtmp"),
+
+            "-" => throw new NotSupportedException(
+                "Unary '-' currently supports integer operands only."),
+
+            _ => throw new NotSupportedException(
+                $"Unsupported unary operator: '{unary.Operator}'.")
         };
     }
 
