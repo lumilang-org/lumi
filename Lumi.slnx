@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="Lumi.Cli/Lumi.Cli.csproj" />
+  <Project Path="Lumi.Core/Lumi.Core.csproj" />
+  <Project Path="Lumi.LLVM/Lumi.LLVM.csproj" />
+</Solution>

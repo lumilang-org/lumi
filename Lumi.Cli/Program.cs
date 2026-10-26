@@ -1,0 +1,50 @@
+﻿using Lumi.Core.Semantics;
+using Lumi.Core.Syntax;
+using Lumi.LLVM.CodeGenerator;
+
+const string outputFile = "lumi.o";
+
+var lumiCode = @"
+            func main() -> void {
+                i16 a = 30
+                i16 b = 10
+
+                print(a + b)
+            }
+        ";
+        
+Console.WriteLine("--- Initialising Lumi Lexer ---");
+
+var lexer = new Lexer(lumiCode);
+
+Token token;
+List<Token> tokens = new();
+
+do
+{
+    token = lexer.NextToken();
+    tokens.Add(token);
+    Console.WriteLine($"Token: {token.Type} | Value: \"{token.Value}\"");
+}
+while (token.Type != TokenType.EndOfFile);
+
+var parser = new Parser(tokens);
+var programAst = parser.ParseFunction();
+
+var checker = new TypeChecker();
+checker.CheckFunction(programAst);
+
+Console.WriteLine("\n--- Emitting Native LLVM IR ---");
+var generator = new Codegen("LumiModule");
+generator.GenerateFunction(programAst);
+
+generator.DumpModuleToConsole();
+
+var outputDirectory = Path.Combine(Directory.GetCurrentDirectory(), "output");
+
+Directory.CreateDirectory(outputDirectory);
+
+var objectFilePath = Path.Combine(outputDirectory, outputFile);
+
+generator.CompileToNativeObject(objectFilePath);
+
