@@ -1,0 +1,69 @@
+using System.Text;
+using LLVMSharp.Interop;
+using Lumi.LLVM.Printing;
+
+namespace Lumi.LLVM.Utils;
+
+public static class WriterUtils
+{
+    private const int StdoutFileDescriptor = 1;
+
+    internal static (LLVMValueRef Func, LLVMTypeRef FuncType)
+        GetOrInsertWrite(LLVMModuleRef module, LLVMContextRef context)
+    {
+        var bytePointerType = LLVMTypeRef.CreatePointer(context.Int8Type, 0);
+
+        var functionType = LLVMTypeRef.CreateFunction(
+            context.Int64Type,
+            new[]
+            {
+                context.Int32Type,
+                bytePointerType,
+                context.Int64Type
+            });
+
+        var function = module.GetNamedFunction("write");
+
+        if (function.Handle != IntPtr.Zero)
+            return (function, functionType);
+
+        function = module.AddFunction("write", functionType);
+
+        return (function, functionType);
+    }
+
+    public static void EmitSystemWrite(
+        string message,
+        LLVMModuleRef module,
+        LLVMContextRef context,
+        LLVMBuilderRef builder)
+    {
+        var (function, functionType) = GetOrInsertWrite(module, context);
+
+        var messagePointer = builder.BuildGlobalStringPtr(message, "str_lit");
+
+        var stdout = LLVMValueRef.CreateConstInt(
+            context.Int32Type,
+            StdoutFileDescriptor);
+
+        var length = LLVMValueRef.CreateConstInt(
+            context.Int64Type,
+            (ulong)Encoding.UTF8.GetByteCount(message));
+
+        builder.BuildCall2(
+            functionType,
+            function,
+            new[] { stdout, messagePointer, length },
+            "write_call");
+    }
+
+    public static void EmitPrintInt(
+        LLVMValueRef valueToPrint,
+        LLVMModuleRef module,
+        LLVMContextRef context,
+        LLVMBuilderRef builder)
+    {
+        new IntegerPrintEmitter(module, context, builder)
+            .Emit(valueToPrint);
+    }
+}

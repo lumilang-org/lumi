@@ -1,20 +1,26 @@
 namespace Lumi.Core.Ast;
 
-public abstract class ASTNode {}
+public abstract class ASTNode
+{
+}
 
 // Base class for expressions that evaluate to a value (e.g., 10, a + b)
-public abstract class ExpressionNode : ASTNode {}
+public abstract class ExpressionNode : ASTNode
+{
+}
 
 // Base class for statements that perform actions (e.g., variable declarations)
-public abstract class StatementNode : ASTNode {}
+public abstract class StatementNode : ASTNode
+{
+}
 
 // Specific Nodes based on your example code:
-public sealed class NumberLiteralNode(string value) : ExpressionNode 
+public sealed class NumberLiteralNode(string value) : ExpressionNode
 {
     public string Value { get; } = value;
 }
 
-public sealed class IdentifierNode(string name) : ExpressionNode 
+public sealed class IdentifierNode(string name) : ExpressionNode
 {
     public string Name { get; } = name;
 }

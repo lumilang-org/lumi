@@ -6,13 +6,19 @@ const string outputFile = "lumi.o";
 
 var lumiCode = @"
             func main() -> void {
+                print(5)
+                print(56789)
+
                 i16 a = 30
                 i16 b = 10
 
                 print(a + b)
+
+                i16 variable = 5600
+                print(variable)
             }
         ";
-        
+
 Console.WriteLine("--- Initialising Lumi Lexer ---");
 
 var lexer = new Lexer(lumiCode);
@@ -25,8 +31,7 @@ do
     token = lexer.NextToken();
     tokens.Add(token);
     Console.WriteLine($"Token: {token.Type} | Value: \"{token.Value}\"");
-}
-while (token.Type != TokenType.EndOfFile);
+} while (token.Type != TokenType.EndOfFile);
 
 var parser = new Parser(tokens);
 var programAst = parser.ParseFunction();
@@ -47,4 +52,3 @@ Directory.CreateDirectory(outputDirectory);
 var objectFilePath = Path.Combine(outputDirectory, outputFile);
 
 generator.CompileToNativeObject(objectFilePath);
-

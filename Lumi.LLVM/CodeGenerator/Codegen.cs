@@ -1,14 +1,16 @@
-namespace Lumi.LLVM.CodeGenerator;
-
 using LLVMSharp.Interop;
-using Core.Ast;
+using Lumi.Core.Ast;
+using Lumi.LLVM.Utils;
+
+namespace Lumi.LLVM.CodeGenerator;
 
 public sealed class Codegen
 {
+    private readonly LLVMBuilderRef _builder;
     private readonly LLVMContextRef _context;
     private readonly LLVMModuleRef _module;
-    private readonly LLVMBuilderRef _builder;
-    
+    private readonly Dictionary<string, LLVMTypeRef> _namedTypes = new();
+
     // Map tracking variable references to their stack allocations (Alloca)
     private readonly Dictionary<string, LLVMValueRef> _namedValues = new();
 
@@ -20,10 +22,10 @@ public sealed class Codegen
         _context = LLVMContextRef.Create();
         _module = _context.CreateModuleWithName(moduleName);
         _builder = _context.CreateBuilder();
-        
-        LLVM.InitializeNativeTarget();
-        LLVM.InitializeNativeAsmPrinter();
-        LLVM.InitializeNativeAsmParser();
+
+        LLVMSharp.Interop.LLVM.InitializeNativeTarget();
+        LLVMSharp.Interop.LLVM.InitializeNativeAsmPrinter();
+        LLVMSharp.Interop.LLVM.InitializeNativeAsmParser();
     }
 
     public void GenerateFunction(FunctionDeclarationNode funcNode)
@@ -37,18 +39,19 @@ public sealed class Codegen
 
         // Clear local scope variables for the new function
         _namedValues.Clear();
+        _namedTypes.Clear();
 
         // Track if a return statement was generated
-        bool hasReturned = false;
+        var hasReturned = false;
 
         foreach (var statement in funcNode.Body)
         {
             GenerateStatement(statement);
-        
+
             if (statement is ReturnStatementNode)
             {
                 hasReturned = true;
-                break; 
+                break;
             }
         }
 
@@ -74,13 +77,27 @@ public sealed class Codegen
         switch (statement)
         {
             case VariableDeclarationNode varDecl:
-                var value = GenerateExpression(varDecl.Initializer);
-                var type = ResolveType(varDecl.Type);
-                var alloca = _builder.BuildAlloca(type, varDecl.Name);
-                
-                _builder.BuildStore(value, alloca);
+            {
+                var declaredType = ResolveType(varDecl.Type);
+                var initializer = GenerateExpression(varDecl.Initializer);
+
+                initializer = CastInteger(
+                    initializer,
+                    declaredType,
+                    $"init_{varDecl.Name}");
+
+                var alloca = _builder.BuildAlloca(
+                    declaredType,
+                    varDecl.Name);
+
+                _builder.BuildStore(initializer, alloca);
+
                 _namedValues[varDecl.Name] = alloca;
+                _namedTypes[varDecl.Name] = declaredType;
+
                 break;
+            }
+
 
             case ExpressionStatementNode exprStmt:
                 GenerateExpression(exprStmt.Expression);
@@ -88,18 +105,14 @@ public sealed class Codegen
 
             case ReturnStatementNode retStmt:
                 var returnValue = GenerateExpression(retStmt.Value);
-                
+
                 // Dynamically cast/extend/truncate to match the function's actual declared return type
                 if (returnValue.TypeOf != _currentReturnType)
                 {
                     if (_currentReturnType.IntWidth > returnValue.TypeOf.IntWidth)
-                    {
                         returnValue = _builder.BuildSExt(returnValue, _currentReturnType, "extended_ret");
-                    }
                     else if (_currentReturnType.IntWidth < returnValue.TypeOf.IntWidth)
-                    {
                         returnValue = _builder.BuildTrunc(returnValue, _currentReturnType, "truncated_ret");
-                    }
                 }
 
                 _builder.BuildRet(returnValue);
@@ -115,59 +128,89 @@ public sealed class Codegen
     {
         return expression switch
         {
-            NumberLiteralNode num => 
-                LLVMValueRef.CreateConstInt(_context.Int16Type, ulong.Parse(num.Value)),
+            NumberLiteralNode num =>
+                LLVMValueRef.CreateConstInt(NumberConverterUtils.TranslateIntLiteral(num), ulong.Parse(num.Value)),
 
-            IdentifierNode id => 
+            IdentifierNode id =>
                 LoadVariable(id.Name),
 
-            BinaryExpressionNode binary => 
+            BinaryExpressionNode binary =>
                 GenerateBinary(binary),
 
             _ => throw new Exception("Unknown IR generation node target.")
         };
     }
 
+
     private LLVMValueRef LoadVariable(string name)
     {
-        if (_namedValues.TryGetValue(name, out var alloca))
-        {
-            return _builder.BuildLoad2(_context.Int16Type, alloca, name);
-        }
-        throw new Exception($"Compiler Error: Undefined identifier '{name}' reached backend.");
+        if (_namedValues.TryGetValue(name, out var alloca) &&
+            _namedTypes.TryGetValue(name, out var type))
+            return _builder.BuildLoad2(type, alloca, name);
+
+        throw new Exception(
+            $"Compiler Error: Undefined identifier '{name}' reached backend.");
     }
+
 
     private LLVMValueRef GenerateBinary(BinaryExpressionNode binary)
     {
         var left = GenerateExpression(binary.Left);
         var right = GenerateExpression(binary.Right);
 
+        if (left.TypeOf.Kind != LLVMTypeKind.LLVMIntegerTypeKind ||
+            right.TypeOf.Kind != LLVMTypeKind.LLVMIntegerTypeKind)
+            throw new NotSupportedException(
+                "Binary arithmetic currently supports integer operands only.");
+
+        var commonWidth = Math.Max(
+            left.TypeOf.IntWidth,
+            right.TypeOf.IntWidth);
+
+        var commonType = commonWidth switch
+        {
+            8 => _context.Int8Type,
+            16 => _context.Int16Type,
+            32 => _context.Int32Type,
+            64 => _context.Int64Type,
+            _ => throw new NotSupportedException(
+                $"Unsupported integer width: {commonWidth}.")
+        };
+
+        left = CastInteger(left, commonType, "left_operand_cast");
+        right = CastInteger(right, commonType, "right_operand_cast");
+
         return binary.Operator switch
         {
             "+" => _builder.BuildAdd(left, right, "addtmp"),
             "-" => _builder.BuildSub(left, right, "subtmp"),
-            _ => throw new Exception($"Unsupported IR binary operator: {binary.Operator}")
+            _ => throw new Exception(
+                $"Unsupported IR binary operator: {binary.Operator}")
         };
     }
 
-    private LLVMTypeRef ResolveType(string typeName) => typeName switch
+
+    private LLVMTypeRef ResolveType(string typeName)
     {
-        "i16" => _context.Int16Type,
-        "i32" => _context.Int32Type,
-        "i64" => _context.Int64Type,
-        "void" => _context.VoidType,
-        _ => throw new Exception($"Unsupported backend data primitive type: {typeName}")
-    };
+        return typeName switch
+        {
+            "i16" => _context.Int16Type,
+            "i32" => _context.Int32Type,
+            "i64" => _context.Int64Type,
+            "void" => _context.VoidType,
+            _ => throw new Exception($"Unsupported backend data primitive type: {typeName}")
+        };
+    }
 
     public void DumpModuleToConsole()
     {
         _module.Dump();
     }
-    
+
     public void CompileToNativeObject(string outputFileName)
     {
         // Fetch the default target triple for your machine
-        string targetTriple = LLVMTargetRef.DefaultTriple;
+        var targetTriple = LLVMTargetRef.DefaultTriple;
         _module.Target = targetTriple;
 
         // 2. Locate the specific target compilation engine
@@ -175,12 +218,12 @@ public sealed class Codegen
 
         // 3. Create the Target Machine profile configuration
         var targetMachine = target.CreateTargetMachine(
-            triple: targetTriple,
-            cpu: "generic",
-            features: "",
-            level: LLVMCodeGenOptLevel.LLVMCodeGenLevelDefault,
-            reloc: LLVMRelocMode.LLVMRelocDefault,
-            codeModel: LLVMCodeModel.LLVMCodeModelDefault
+            targetTriple,
+            "generic",
+            "",
+            LLVMCodeGenOptLevel.LLVMCodeGenLevelDefault,
+            LLVMRelocMode.LLVMRelocDefault,
+            LLVMCodeModel.LLVMCodeModelDefault
         );
 
         // Retrieve the proper Data Layout string representation from the target machine
@@ -189,11 +232,43 @@ public sealed class Codegen
 
         // 4. Emit the compilation tree into a native binary object file (.o)
         targetMachine.EmitToFile(
-            _module, 
-            outputFileName, 
+            _module,
+            outputFileName,
             LLVMCodeGenFileType.LLVMObjectFile
         );
-        
+
         Console.WriteLine($"[Codegen]: Object file written successfully to: {outputFileName}");
+    }
+
+    private LLVMValueRef CastInteger(
+        LLVMValueRef value,
+        LLVMTypeRef targetType,
+        string name)
+    {
+        var sourceType = value.TypeOf;
+
+        if (sourceType.Kind != LLVMTypeKind.LLVMIntegerTypeKind ||
+            targetType.Kind != LLVMTypeKind.LLVMIntegerTypeKind)
+        {
+            if (sourceType == targetType)
+                return value;
+
+            throw new NotSupportedException(
+                $"Cannot convert {sourceType} to {targetType}.");
+        }
+
+        if (sourceType.IntWidth == targetType.IntWidth)
+            return value;
+
+        if (sourceType.IntWidth < targetType.IntWidth)
+            return _builder.BuildSExt(
+                value,
+                targetType,
+                name);
+
+        return _builder.BuildTrunc(
+            value,
+            targetType,
+            name);
     }
 }

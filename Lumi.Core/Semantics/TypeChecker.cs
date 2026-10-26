@@ -1,5 +1,4 @@
 using Lumi.Core.Ast;
-using Lumi.Core.Syntax;
 
 namespace Lumi.Core.Semantics;
 
@@ -10,12 +9,9 @@ public sealed class TypeChecker
         // Create a new local scope for the function body
         var functionScope = new SymbolTable();
 
-        foreach (var statement in func.Body)
-        {
-            CheckStatement(statement, functionScope, func.ReturnType);
-        }
+        foreach (var statement in func.Body) CheckStatement(statement, functionScope, func.ReturnType);
     }
-    
+
     private void CheckStatement(StatementNode statement, SymbolTable scope, string expectedReturnType)
     {
         switch (statement)
@@ -26,9 +22,8 @@ public sealed class TypeChecker
 
                 // For a simple language, enforce strict type matching
                 if (varDecl.Type != initializerType)
-                {
-                    throw new Exception($"Type Mismatch: Cannot assign type '{initializerType}' to a variable of type '{varDecl.Type}'");
-                }
+                    throw new Exception(
+                        $"Type Mismatch: Cannot assign type '{initializerType}' to a variable of type '{varDecl.Type}'");
 
                 // Register variable in the current local scope
                 scope.Declare(varDecl.Name, varDecl.Type);
@@ -41,18 +36,16 @@ public sealed class TypeChecker
                 var actualReturnType = CheckExpression(retStmt.Value, scope);
 
                 if (actualReturnType != expectedReturnType)
-                {
-                    throw new Exception($"Type Mismatch: Function expects to return '{expectedReturnType}' but got '{actualReturnType}' instead.");
-                }
+                    throw new Exception(
+                        $"Type Mismatch: Function expects to return '{expectedReturnType}' but got '{actualReturnType}' instead.");
                 break;
         }
     }
-    
+
     private string CheckExpression(ExpressionNode expression, SymbolTable scope)
     {
         return expression switch
         {
-            // Number literals map out to integer type processing
             NumberLiteralNode node => InferBoundsUtils.InferNumericBounds(node),
 
             // Lookup identifiers inside our active tracking scope
@@ -71,9 +64,8 @@ public sealed class TypeChecker
         var rightType = CheckExpression(binary.Right, scope);
 
         if (leftType != rightType)
-        {
-            throw new Exception($"Type Mismatch: Operator '{binary.Operator}' cannot be applied to types '{leftType}' and '{rightType}'");
-        }
+            throw new Exception(
+                $"Type Mismatch: Operator '{binary.Operator}' cannot be applied to types '{leftType}' and '{rightType}'");
 
         return leftType; // e.g. i16 + i16 yields an i16
     }

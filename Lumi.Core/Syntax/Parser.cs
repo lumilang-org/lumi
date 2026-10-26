@@ -4,7 +4,7 @@ namespace Lumi.Core.Syntax;
 
 public sealed class Parser(IReadOnlyList<Token> tokens)
 {
-    private int _position = 0;
+    private int _position;
 
     // Helper properties to read the current and upcoming tokens
     private Token Current => Peek(0);
@@ -12,68 +12,59 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
 
     private Token Peek(int offset)
     {
-        int index = _position + offset;
-        if (index >= tokens.Count)
-        {
-            return tokens[^1]; // Always return the final EOF token if out of range
-        }
+        var index = _position + offset;
+        if (index >= tokens.Count) return tokens[^1]; // Always return the final EOF token if out of range
         return tokens[index];
     }
 
     private void Advance()
     {
-        if (_position < tokens.Count - 1)
-        {
-            _position++;
-        }
+        if (_position < tokens.Count - 1) _position++;
     }
 
     private void Consume(TokenType type)
     {
         if (Current.Type == type)
-        {
             Advance();
-        }
         else
-        {
-            throw new Exception($"Syntax Error: Expected token {type}, got {Current.Type} ('{Current.Value}') at position {_position}");
-        }
+            throw new Exception(
+                $"Syntax Error: Expected token {type}, got {Current.Type} ('{Current.Value}') at position {_position}");
     }
 
-    private Precedence GetPrecedence(TokenType type) => type switch
+    private Precedence GetPrecedence(TokenType type)
     {
-        TokenType.Plus or TokenType.Minus => Precedence.Sum,
-        _ => Precedence.Lowest
-    };
+        return type switch
+        {
+            TokenType.Plus or TokenType.Minus => Precedence.Sum,
+            _ => Precedence.Lowest
+        };
+    }
 
     // --- Parsing Entry Points ---
 
     public FunctionDeclarationNode ParseFunction()
     {
         Consume(TokenType.KeywordFunc);
-        
-        string funcName = Current.Value;
+
+        var funcName = Current.Value;
         Consume(TokenType.Identifier);
-        
+
         Consume(TokenType.LParen);
         Consume(TokenType.RParen);
         Consume(TokenType.Arrow);
-        
+
         var returnType = Current.Value;
         var returnToken = Lexer.Keywords.GetValueOrDefault(returnType);
-        
-        Consume(returnToken); 
-        
+
+        Consume(returnToken);
+
         Consume(TokenType.LBrace);
-        
+
         var body = new List<StatementNode>();
-        while (Current.Type != TokenType.RBrace && Current.Type != TokenType.EndOfFile)
-        {
-            body.Add(ParseStatement());
-        }
-        
+        while (Current.Type != TokenType.RBrace && Current.Type != TokenType.EndOfFile) body.Add(ParseStatement());
+
         Consume(TokenType.RBrace);
-        
+
         return new FunctionDeclarationNode(funcName, returnType, body);
     }
 
@@ -82,17 +73,17 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
         switch (Current.Type)
         {
             // Simple type token routing for variable declarations (e.g., i16 a = 10)
-            case TokenType.TypeI16 or TokenType.TypeI32 or TokenType.TypeVoid:
+            case TokenType.TypeI16 or TokenType.TypeI32 or TokenType.TypeI64 or TokenType.TypeVoid:
             {
                 var type = Current.Value;
                 Advance(); // Consume the type keyword
-            
+
                 var name = Current.Value;
                 Consume(TokenType.Identifier);
-            
+
                 Consume(TokenType.Assign);
-            
-                ExpressionNode initializer = ParseExpression();
+
+                var initializer = ParseExpression();
                 return new VariableDeclarationNode(type, name, initializer);
             }
             case TokenType.KeywordReturn:
@@ -108,7 +99,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
                 Consume(TokenType.LParen);
 
                 var expression = ParseExpression();
-                
+
                 Consume(TokenType.RParen);
 
                 return new PrintStatementNode(expression);
@@ -116,7 +107,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
             default:
             {
                 // Treat plain expressions as expression statements (e.g., a + b)
-                ExpressionNode expr = ParseExpression();
+                var expr = ParseExpression();
                 return new ExpressionStatementNode(expr);
             }
         }
@@ -124,15 +115,13 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
 
     private ExpressionNode ParseExpression(Precedence precedence = Precedence.Lowest)
     {
-        // 1. Parse the leftmost component (e.g., variable identifier or number literal)
-        ExpressionNode leftExpr = ParsePrefix();
+        // Parse the leftmost component (e.g., variable identifier or number literal)
+        var leftExpr = ParsePrefix();
 
         // Look at Current operator type, not Next token lookahead type
         while (Current.Type != TokenType.EndOfFile && precedence < GetPrecedence(Current.Type))
-        {
             // Store operator context
             leftExpr = ParseInfix(leftExpr);
-        }
 
         return leftExpr;
     }
@@ -152,11 +141,11 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
     {
         var op = Current.Value;
         var currentPrecedence = GetPrecedence(Current.Type);
-    
+
         Advance(); // Step OVER the operator token (e.g., past '+')
-    
+
         // Parse the right-hand element with current binding precedence
-        ExpressionNode right = ParseExpression(currentPrecedence);
+        var right = ParseExpression(currentPrecedence);
         return new BinaryExpressionNode(left, op, right);
     }
 
