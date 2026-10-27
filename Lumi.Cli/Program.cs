@@ -6,20 +6,7 @@ const string outputFile = "lumi.o";
 
 var lumiCode = @"
             func main() -> void {
-                print(5)
-                print(56789)
-
-                u16 a = 30
-                u16 b = 10
-
-                print(a + b)
-
-                i32 variable = -200
-                i32 variable2 = -300              
-                println(variable + variable2)
-
-                char letter = 'A'
-                println(letter)
+                println(true)
             }
         ";
 

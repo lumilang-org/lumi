@@ -6,8 +6,6 @@ namespace Lumi.LLVM.Utils;
 
 public static class WriterUtils
 {
-    private const int StdoutFileDescriptor = 1;
-
     internal static (LLVMValueRef Func, LLVMTypeRef FuncType)
         GetOrInsertWrite(LLVMModuleRef module, LLVMContextRef context)
     {
@@ -76,5 +74,12 @@ public static class WriterUtils
             function,
             new[] { stdout, messagePointer, length },
             "write_call");
+    }
+
+    internal static void EmitPrintBool(LLVMValueRef printValue, LLVMModuleRef module, LLVMContextRef context,
+        LLVMBuilderRef builder)
+    {
+        new BooleanPrintEmitter(module, context, builder)
+            .Emit(printValue);
     }
 }

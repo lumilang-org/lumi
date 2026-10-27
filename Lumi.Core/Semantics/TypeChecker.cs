@@ -68,6 +68,8 @@ public sealed class TypeChecker
 
             LiteralNode<char> _ => TypeUtils.Char,
 
+            LiteralNode<bool> _ => TypeUtils.Bool,
+
             _ => throw new Exception(
                 "Unknown expression type encountered during analysis.")
         };

@@ -80,30 +80,19 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
                 TokenType.TypeI64 or
                 TokenType.TypeU16 or
                 TokenType.TypeU32 or
+                TokenType.TypeBool or
+                TokenType.TypeChar or
                 TokenType.TypeU64:
-            {
-                var type = Current.Value;
-                Advance(); // Consume the type keyword
-
-                var name = Current.Value;
-                Consume(TokenType.Identifier);
-
-                Consume(TokenType.Assign);
-
-                var initializer = ParseExpression();
-                return new VariableDeclarationNode(type, name, initializer);
-            }
-            case TokenType.TypeChar:
             {
                 var type = Current.Value;
                 Advance();
 
                 var name = Current.Value;
                 Consume(TokenType.Identifier);
+
                 Consume(TokenType.Assign);
 
                 var initializer = ParseExpression();
-
                 return new VariableDeclarationNode(type, name, initializer);
             }
             case TokenType.KeywordReturn:
@@ -115,10 +104,15 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
             }
             case TokenType.PrintFunc:
             {
-                var appendNewline = Current.Value == "println";
+                var functionName = Current.Value;
+                var appendNewline = functionName == "println";
 
                 Consume(TokenType.PrintFunc);
                 Consume(TokenType.LParen);
+
+                if (Current.Type == TokenType.RParen)
+                    throw new Exception(
+                        $"{Current.Value}: expected an expression inside {functionName}.");
 
                 var expression = ParseExpression();
 
@@ -157,6 +151,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
             TokenType.Identifier => ParseIdentifier(),
             TokenType.Minus => ParseUnaryExpression(),
             TokenType.Character => ParseCharLiteral(),
+            TokenType.BooleanLiteral => ParseBooleanLiteral(),
             _ => throw new Exception($"Syntax Error: Unexpected prefix token {Current.Type}")
         };
     }
@@ -175,6 +170,13 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
 
         var operand = ParseExpression(Precedence.Sum);
         return new UnaryExpressionNode(op, operand);
+    }
+
+    private ExpressionNode ParseBooleanLiteral()
+    {
+        var node = new LiteralNode<bool>(Current.Value.Equals("true", StringComparison.InvariantCulture));
+        Advance();
+        return node;
     }
 
     private ExpressionNode ParseInfix(ExpressionNode left)

@@ -1,6 +1,7 @@
 using LLVMSharp.Interop;
 using Lumi.Core.Ast;
 using Lumi.Core.Semantics;
+using Lumi.Core.Syntax;
 using Lumi.LLVM.Utils;
 
 namespace Lumi.LLVM.CodeGenerator;
@@ -131,12 +132,15 @@ public sealed class Codegen
 
                 switch (expressionType)
                 {
-                    case "char":
+                    case TypeUtils.Char:
                         WriterUtils.EmitPrintChar(printValue, _module, _context, _builder);
                         break;
                     case "i8" or "i16" or "i32" or "i64"
                         or "u8" or "u16" or "u32" or "u64":
                         WriterUtils.EmitPrintInt(printValue, _module, _context, _builder);
+                        break;
+                    case TypeUtils.Bool:
+                        WriterUtils.EmitPrintBool(printValue, _module, _context, _builder);
                         break;
                     default:
                         throw new NotSupportedException(
@@ -161,6 +165,7 @@ public sealed class Codegen
             BinaryExpressionNode binary => GenerateBinary(binary),
             UnaryExpressionNode unary => GenerateUnary(unary),
             LiteralNode<char> character => LLVMValueRef.CreateConstInt(_context.Int8Type, character.Value),
+            LiteralNode<bool> boolean => LLVMValueRef.CreateConstInt(_context.Int1Type, (ulong)(boolean.Value ? 1 : 0)),
             _ => throw new Exception("Unknown IR generation node target.")
         };
     }
@@ -240,6 +245,7 @@ public sealed class Codegen
             "i64" or "u64" => _context.Int64Type,
             "char" => _context.Int8Type,
             "void" => _context.VoidType,
+            TypeUtils.Bool => _context.Int1Type,
 
             _ => throw new Exception(
                 $"Unsupported backend data primitive type: {typeName}")
