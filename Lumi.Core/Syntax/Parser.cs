@@ -35,7 +35,20 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
     {
         return type switch
         {
-            TokenType.Plus or TokenType.Minus => Precedence.Sum,
+            TokenType.EqualEqual
+                or TokenType.BangEqual
+                or TokenType.LessThan
+                or TokenType.LessThanOrEqual
+                or TokenType.GreaterThan
+                or TokenType.GreaterThanOrEqual
+                => Precedence.Comparison,
+
+            TokenType.Plus or TokenType.Minus
+                => Precedence.Sum,
+
+            TokenType.Star or TokenType.Slash
+                => Precedence.Product,
+
             _ => Precedence.Lowest
         };
     }
@@ -168,7 +181,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
         var op = Current.Value;
         Advance();
 
-        var operand = ParseExpression(Precedence.Sum);
+        var operand = ParseExpression(Precedence.Prefix);
         return new UnaryExpressionNode(op, operand);
     }
 

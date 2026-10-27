@@ -101,7 +101,67 @@ public sealed class Lexer
         {
             case '=':
                 Advance();
+
+                if (_currentChar == '=')
+                {
+                    Advance();
+                    return new Token(TokenType.EqualEqual, "==");
+                }
+
                 return new Token(TokenType.Assign, "=");
+
+            case '!':
+                Advance();
+
+                if (_currentChar == '=')
+                {
+                    Advance();
+                    return new Token(TokenType.BangEqual, "!=");
+                }
+
+                return new Token(TokenType.LogicalNot, "!");
+
+            case '&':
+                Advance();
+
+                if (_currentChar != '&')
+                    throw new NotSupportedException("Unexpected character '&'");
+
+                Advance();
+                return new Token(TokenType.LogicalAnd, "&&");
+
+            case '|':
+                Advance();
+
+                if (_currentChar != '|')
+                    throw new NotSupportedException("Unexpected character '|'");
+
+                Advance();
+                return new Token(TokenType.LogicalOr, "||");
+
+
+            case '<':
+                Advance();
+
+                if (_currentChar == '=')
+                {
+                    Advance();
+                    return new Token(TokenType.LessThanOrEqual, "<=");
+                }
+
+                return new Token(TokenType.LessThan, "<");
+
+            case '>':
+                Advance();
+
+                if (_currentChar == '=')
+                {
+                    Advance();
+                    return new Token(TokenType.GreaterThanOrEqual, ">=");
+                }
+
+                return new Token(TokenType.GreaterThan, ">");
+
             case '+':
                 Advance();
                 return new Token(TokenType.Plus, "+");

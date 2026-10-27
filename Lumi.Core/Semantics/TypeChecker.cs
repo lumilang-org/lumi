@@ -95,17 +95,62 @@ public sealed class TypeChecker
         };
     }
 
-    private string CheckBinaryExpression(BinaryExpressionNode binary, SymbolTable scope)
+    private string CheckBinaryExpression(
+        BinaryExpressionNode binary,
+        SymbolTable scope)
     {
         var leftType = CheckExpression(binary.Left, scope);
         var rightType = CheckExpression(binary.Right, scope);
 
-        if (leftType != rightType)
-            throw new Exception(
-                $"Type Mismatch: Operator '{binary.Operator}' cannot be applied to types '{leftType}' and '{rightType}'");
+        // Arithmetic operators require matching integer types.
+        if (binary.Operator is TypeUtils.Plus or TypeUtils.Minus or TypeUtils.Star or TypeUtils.Slash)
+        {
+            if (leftType != rightType)
+                throw new Exception(
+                    $"Type Mismatch: Operator '{binary.Operator}' " +
+                    $"cannot be applied to types '{leftType}' and '{rightType}'.");
 
-        return leftType; // e.g. i16 + i16 yields an i16
+            if (!IsIntegerType(leftType))
+                throw new Exception(
+                    $"Type Mismatch: Operator '{binary.Operator}' " +
+                    $"requires integer operands, got '{leftType}'.");
+
+            return leftType;
+        }
+
+        // Comparison operators produce bool.
+        if (binary.Operator is
+            TypeUtils.EqualsEquals or
+            TypeUtils.BangEquals or
+            TypeUtils.LessThan or
+            TypeUtils.LessThanOrEquals or
+            TypeUtils.GreaterThan or
+            TypeUtils.GreaterThanOrEquals)
+        {
+            if (leftType != rightType)
+                throw new Exception(
+                    $"Type Mismatch: Operator '{binary.Operator}' " +
+                    $"cannot compare types '{leftType}' and '{rightType}'.");
+
+            if (!IsIntegerType(leftType) && leftType != TypeUtils.Char)
+                throw new Exception(
+                    $"Type Mismatch: Operator '{binary.Operator}' " +
+                    $"cannot compare values of type '{leftType}'.");
+
+            // Equality comparisons can also support bool values.
+            if (leftType == TypeUtils.Bool &&
+                binary.Operator is not ("==" or "!="))
+                throw new Exception(
+                    $"Type Mismatch: Operator '{binary.Operator}' " +
+                    "does not support boolean operands.");
+
+            return TypeUtils.Bool;
+        }
+
+        throw new Exception(
+            $"Unsupported binary operator: '{binary.Operator}'.");
     }
+
 
     private static bool CanAssign(string targetType, string sourceType, ExpressionNode expression)
     {

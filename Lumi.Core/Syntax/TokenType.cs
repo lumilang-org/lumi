@@ -26,6 +26,8 @@ public enum TokenType
 
     Assign,
     Plus,
+    Star,
+    Slash,
     Minus,
     Arrow,
     Comma,
@@ -36,6 +38,17 @@ public enum TokenType
     RParen,
     LBracket,
     RBracket,
+
+    // Logical Operators
+    EqualEqual,
+    BangEqual,
+    LessThan,
+    GreaterThan,
+    LessThanOrEqual,
+    GreaterThanOrEqual,
+    LogicalAnd,
+    LogicalOr,
+    LogicalNot,
 
     //Special
     EndOfFile,

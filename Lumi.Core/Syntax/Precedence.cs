@@ -3,7 +3,8 @@ namespace Lumi.Core.Syntax;
 public enum Precedence
 {
     Lowest = 0,
-    Sum = 1,
-    Product = 2,
-    Prefix = 3,
+    Comparison = 1,
+    Sum = 2,
+    Product = 3,
+    Prefix = 4
 }

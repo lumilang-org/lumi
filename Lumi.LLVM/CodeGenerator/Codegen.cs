@@ -197,16 +197,65 @@ public sealed class Codegen
             $"Compiler Error: Undefined identifier '{name}' reached backend.");
     }
 
-
     private LLVMValueRef GenerateBinary(BinaryExpressionNode binary)
     {
         var left = GenerateExpression(binary.Left);
         var right = GenerateExpression(binary.Right);
 
+        var leftType = _semanticModel.GetExpressionType(binary.Left);
+        var rightType = _semanticModel.GetExpressionType(binary.Right);
+
         if (left.TypeOf.Kind != LLVMTypeKind.LLVMIntegerTypeKind ||
             right.TypeOf.Kind != LLVMTypeKind.LLVMIntegerTypeKind)
             throw new NotSupportedException(
-                "Binary arithmetic currently supports integer operands only.");
+                $"Binary operator '{binary.Operator}' requires integer operands.");
+
+        // Comparisons produce an LLVM i1 value, which represents Lumi's bool.
+        if (binary.Operator is
+            TypeUtils.EqualsEquals or
+            TypeUtils.BangEquals or
+            TypeUtils.LessThan or
+            TypeUtils.LessThanOrEquals or
+            TypeUtils.GreaterThan or
+            TypeUtils.GreaterThanOrEquals)
+        {
+            var predicate = binary.Operator switch
+            {
+                TypeUtils.EqualsEquals => LLVMIntPredicate.LLVMIntEQ,
+                TypeUtils.BangEquals => LLVMIntPredicate.LLVMIntNE,
+
+                TypeUtils.LessThan => IsUnsignedType(leftType)
+                    ? LLVMIntPredicate.LLVMIntULT
+                    : LLVMIntPredicate.LLVMIntSLT,
+
+                TypeUtils.LessThanOrEquals => IsUnsignedType(leftType)
+                    ? LLVMIntPredicate.LLVMIntULE
+                    : LLVMIntPredicate.LLVMIntSLE,
+
+                TypeUtils.GreaterThan => IsUnsignedType(leftType)
+                    ? LLVMIntPredicate.LLVMIntUGT
+                    : LLVMIntPredicate.LLVMIntSGT,
+
+                TypeUtils.GreaterThanOrEquals => IsUnsignedType(leftType)
+                    ? LLVMIntPredicate.LLVMIntUGE
+                    : LLVMIntPredicate.LLVMIntSGE,
+
+                _ => throw new NotSupportedException(
+                    $"Unsupported comparison operator: {binary.Operator}")
+            };
+
+            return _builder.BuildICmp(
+                predicate,
+                left,
+                right,
+                "cmptmp");
+        }
+
+        // Arithmetic requires matching semantic types.
+        if (leftType != rightType)
+            throw new InvalidOperationException(
+                $"Codegen received incompatible operand types: " +
+                $"'{leftType}' and '{rightType}'.");
 
         var commonWidth = Math.Max(
             left.TypeOf.IntWidth,
@@ -218,8 +267,9 @@ public sealed class Codegen
             16 => _context.Int16Type,
             32 => _context.Int32Type,
             64 => _context.Int64Type,
+
             _ => throw new NotSupportedException(
-                $"Unsupported integer width: {commonWidth}.")
+                $"Unsupported arithmetic integer width: {commonWidth}.")
         };
 
         left = CastInteger(left, commonType, "left_operand_cast");
@@ -227,11 +277,24 @@ public sealed class Codegen
 
         return binary.Operator switch
         {
-            "+" => _builder.BuildAdd(left, right, "addtmp"),
-            "-" => _builder.BuildSub(left, right, "subtmp"),
-            _ => throw new Exception(
+            TypeUtils.Plus => _builder.BuildAdd(left, right, "addtmp"),
+            TypeUtils.Minus => _builder.BuildSub(left, right, "subtmp"),
+            TypeUtils.Star => _builder.BuildMul(left, right, "multmp"),
+
+            TypeUtils.Slash => IsUnsignedType(leftType)
+                ? _builder.BuildUDiv(left, right, "divtmp")
+                : _builder.BuildSDiv(left, right, "divtmp"),
+
+            _ => throw new NotSupportedException(
                 $"Unsupported IR binary operator: {binary.Operator}")
         };
+    }
+
+    private static bool IsUnsignedType(string type)
+    {
+        return type.StartsWith(
+            "u",
+            StringComparison.Ordinal);
     }
 
 
