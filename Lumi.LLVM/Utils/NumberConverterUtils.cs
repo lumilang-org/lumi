@@ -5,13 +5,11 @@ namespace Lumi.LLVM.Utils;
 
 public static class NumberConverterUtils
 {
-    public static LLVMTypeRef TranslateIntLiteral(NumberLiteralNode node)
+    public static LLVMTypeRef TranslateIntLiteral(LiteralNode<string> node)
     {
         if (!long.TryParse(node.Value, out var value))
-        {
             throw new OverflowException(
                 $"Integer literal '{node.Value}' exceeds the supported range.");
-        }
 
         if (value >= sbyte.MinValue && value <= sbyte.MaxValue)
             return LLVMTypeRef.Int8;

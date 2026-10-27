@@ -163,7 +163,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
 
     private ExpressionNode ParseCharLiteral()
     {
-        var node = new CharacterLiteralNode(Current.Value);
+        var node = new LiteralNode<char>(Current.Value[0]);
         Advance();
         return node;
     }
@@ -192,7 +192,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
 
     private ExpressionNode ParseNumberLiteral()
     {
-        var node = new NumberLiteralNode(Current.Value);
+        var node = new LiteralNode<string>(Current.Value);
         Advance();
         return node;
     }

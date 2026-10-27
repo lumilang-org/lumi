@@ -80,7 +80,7 @@ public sealed class Lexer
         var lexemeSpan = _source.AsSpan(start, _position - start);
         var value = lexemeSpan.ToString();
 
-        if (value is "true" or "false") return new Token(TokenType.BooleanLiteral, value);
+        if (value is TypeUtils.True or TypeUtils.False) return new Token(TokenType.BooleanLiteral, value);
 
         if (Keywords.TryGetValue(value, out var matchedType)) return new Token(matchedType, value);
 

@@ -155,12 +155,12 @@ public sealed class Codegen
     {
         return expression switch
         {
-            NumberLiteralNode num => LLVMValueRef.CreateConstInt(NumberConverterUtils.TranslateIntLiteral(num),
+            LiteralNode<string> num => LLVMValueRef.CreateConstInt(NumberConverterUtils.TranslateIntLiteral(num),
                 ulong.Parse(num.Value)),
             IdentifierNode id => LoadVariable(id.Name),
             BinaryExpressionNode binary => GenerateBinary(binary),
             UnaryExpressionNode unary => GenerateUnary(unary),
-            CharacterLiteralNode character => LLVMValueRef.CreateConstInt(_context.Int8Type, character.Value[0]),
+            LiteralNode<char> character => LLVMValueRef.CreateConstInt(_context.Int8Type, character.Value),
             _ => throw new Exception("Unknown IR generation node target.")
         };
     }
@@ -347,7 +347,7 @@ public sealed class Codegen
 
         // Integer literals currently represent non-negative values.
         // Their magnitude is preserved by zero extension.
-        if (expression is NumberLiteralNode)
+        if (expression is LiteralNode<string>)
             return _builder.BuildZExt(value, targetType, name);
 
         // For variables, preserve their declared signedness.

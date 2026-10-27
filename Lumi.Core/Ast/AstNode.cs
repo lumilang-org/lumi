@@ -14,11 +14,6 @@ public abstract class StatementNode : ASTNode
 {
 }
 
-public sealed class NumberLiteralNode(string value) : ExpressionNode
-{
-    public string Value { get; } = value;
-}
-
 public sealed class UnaryExpressionNode(
     string @operator,
     ExpressionNode operand) : ExpressionNode
@@ -69,7 +64,9 @@ public sealed class ReturnStatementNode(ExpressionNode value) : StatementNode
     public ExpressionNode Value { get; } = value;
 }
 
-public sealed class CharacterLiteralNode(string value) : ExpressionNode
+public abstract class LiteralNode : ExpressionNode;
+
+public sealed class LiteralNode<T>(T value) : LiteralNode
 {
-    public string Value { get; } = value;
+    public T Value { get; } = value;
 }

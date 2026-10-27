@@ -1,5 +1,6 @@
 using System.Globalization;
 using Lumi.Core.Ast;
+using Lumi.Core.Syntax;
 
 namespace Lumi.Core.Semantics;
 
@@ -57,27 +58,21 @@ public sealed class TypeChecker
     {
         var type = expression switch
         {
-            NumberLiteralNode node =>
-                InferBoundsUtils.InferNumericBounds(node),
+            LiteralNode<string> node => InferBoundsUtils.InferNumericBounds(node),
 
-            IdentifierNode id =>
-                scope.Lookup(id.Name),
+            IdentifierNode id => scope.Lookup(id.Name),
 
-            BinaryExpressionNode binary =>
-                CheckBinaryExpression(binary, scope),
+            BinaryExpressionNode binary => CheckBinaryExpression(binary, scope),
 
-            UnaryExpressionNode unary =>
-                CheckUnaryExpression(unary, scope),
+            UnaryExpressionNode unary => CheckUnaryExpression(unary, scope),
 
-            CharacterLiteralNode =>
-                "char",
+            LiteralNode<char> _ => TypeUtils.Char,
 
             _ => throw new Exception(
                 "Unknown expression type encountered during analysis.")
         };
 
         SemanticModel.SetExpressionType(expression, type);
-
         return type;
     }
 
@@ -114,15 +109,15 @@ public sealed class TypeChecker
     {
         if (targetType == sourceType) return true;
 
-        if (expression is NumberLiteralNode literal && IsIntegerType(targetType))
+        if (expression is LiteralNode<string> literal && IsIntegerType(targetType))
             return FitsInType(literal.Value, targetType);
 
-        if (targetType == "char" && expression is CharacterLiteralNode _) return true;
+        if (targetType == TypeUtils.Char && expression is LiteralNode<char> _) return true;
 
         if (expression is UnaryExpressionNode
             {
                 Operator: "-",
-                Operand: NumberLiteralNode lit
+                Operand: LiteralNode<string> lit
             }
             && targetType is "i8" or "i16" or "i32" or "i64")
             return NegativeLiteralFitsInType(lit.Value, targetType);
