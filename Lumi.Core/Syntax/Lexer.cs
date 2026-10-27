@@ -165,6 +165,12 @@ public sealed class Lexer
             case '+':
                 Advance();
                 return new Token(TokenType.Plus, "+");
+            case '*':
+                Advance();
+                return new Token(TokenType.Star, "*");
+            case '/':
+                Advance();
+                return new Token(TokenType.Slash, "/");
             case '-':
                 if (Peek() == '>')
                 {

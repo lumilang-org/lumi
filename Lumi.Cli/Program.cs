@@ -6,10 +6,7 @@ const string outputFile = "lumi.o";
 
 var lumiCode = @"
             func main() -> void {
-                u32 a = 10
-                u32 b = 5
-
-                bool result = 10 / 5
+                i16 result = 7 / 2
                 println(result)
             }
         ";

@@ -93,9 +93,9 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
                 TokenType.TypeI64 or
                 TokenType.TypeU16 or
                 TokenType.TypeU32 or
+                TokenType.TypeU64 or
                 TokenType.TypeBool or
-                TokenType.TypeChar or
-                TokenType.TypeU64:
+                TokenType.TypeChar:
             {
                 var type = Current.Value;
                 Advance();
@@ -142,14 +142,14 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
         }
     }
 
-    private ExpressionNode ParseExpression(Precedence precedence = Precedence.Lowest)
+    private ExpressionNode ParseExpression(
+        Precedence precedence = Precedence.Lowest)
     {
-        // Parse the leftmost component (e.g., variable identifier or number literal)
         var leftExpr = ParsePrefix();
 
-        // Look at Current operator type, not Next token lookahead type
-        while (Current.Type != TokenType.EndOfFile && precedence < GetPrecedence(Current.Type))
-            // Store operator context
+        while (Current.Type != TokenType.EndOfFile &&
+               Current.Type != TokenType.RParen &&
+               precedence < GetPrecedence(Current.Type))
             leftExpr = ParseInfix(leftExpr);
 
         return leftExpr;
@@ -165,8 +165,22 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
             TokenType.Minus => ParseUnaryExpression(),
             TokenType.Character => ParseCharLiteral(),
             TokenType.BooleanLiteral => ParseBooleanLiteral(),
+            TokenType.LParen => ParseGroupedExpression(),
             _ => throw new Exception($"Syntax Error: Unexpected prefix token {Current.Type}")
         };
+    }
+
+    private ExpressionNode ParseGroupedExpression()
+    {
+        Advance(); // Move past '('
+
+        var expression = ParseExpression();
+
+        if (Current.Type != TokenType.RParen) throw new Exception("Syntax Error: Expected ')' after expression");
+
+        Advance();
+
+        return expression;
     }
 
     private ExpressionNode ParseCharLiteral()
