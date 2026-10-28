@@ -17,11 +17,13 @@ public sealed class Lexer
         { TypeConst.U32, TokenType.TypeU32 },
         { TypeConst.U64, TokenType.TypeU64 },
         { "byte", TokenType.TypeByte },
-        { "bool", TokenType.TypeBool },
-        { "void", TokenType.TypeVoid },
+        { TypeConst.Bool, TokenType.TypeBool },
+        { TypeConst.Void, TokenType.TypeVoid },
         { TypeConst.F16, TokenType.TypeF16 },
         { TypeConst.F32, TokenType.TypeF32 },
-        { TypeConst.F64, TokenType.TypeF64 }
+        { TypeConst.F64, TokenType.TypeF64 },
+        { TypeConst.If, TokenType.KeywordIf },
+        { TypeConst.Else, TokenType.KeywordElse }
     };
 
     private readonly string _source;

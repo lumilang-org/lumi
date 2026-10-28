@@ -31,41 +31,32 @@ public sealed class Codegen
 
     public void GenerateFunction(FunctionDeclarationNode funcNode)
     {
+        Console.WriteLine("[DEBUG] GenerateFunction UPDATED VERSION");
+
         _currentReturnType = ResolveType(funcNode.ReturnType);
+
         var functionType = LLVMTypeRef.CreateFunction(_currentReturnType, []);
         var function = _module.AddFunction(funcNode.Name, functionType);
 
         var entryBlock = _context.AppendBasicBlock(function, "entry");
         _builder.PositionAtEnd(entryBlock);
 
-        // Clear local scope variables for the new function
         _variables.Clear();
 
-        // Track if a return statement was generated
-        var hasReturned = false;
+        GenerateStatements(funcNode.Body);
 
-        foreach (var statement in funcNode.Body)
+        var currentBlock = _builder.InsertBlock;
+
+        if (!HasTerminator(currentBlock))
         {
-            GenerateStatement(statement);
-
-            if (statement is ReturnStatementNode)
-            {
-                hasReturned = true;
-                break;
-            }
-        }
-
-        // Only emit fallback terminator if the function body didn't explicitly return
-        if (!hasReturned)
-        {
-            if (funcNode.ReturnType == "void")
+            if (funcNode.ReturnType == TypeConst.Void)
             {
                 _builder.BuildRetVoid();
             }
             else
             {
-                var defaultZero = LLVMValueRef.CreateConstInt(_currentReturnType, 0);
-                _builder.BuildRet(defaultZero);
+                _builder.BuildRet(
+                    LLVMValueRef.CreateConstInt(_currentReturnType, 0));
             }
         }
 
@@ -118,9 +109,13 @@ public sealed class Codegen
                 if (returnValue.TypeOf != _currentReturnType)
                 {
                     if (_currentReturnType.IntWidth > returnValue.TypeOf.IntWidth)
+                    {
                         returnValue = _builder.BuildSExt(returnValue, _currentReturnType, "extended_ret");
+                    }
                     else if (_currentReturnType.IntWidth < returnValue.TypeOf.IntWidth)
+                    {
                         returnValue = _builder.BuildTrunc(returnValue, _currentReturnType, "truncated_ret");
+                    }
                 }
 
                 _builder.BuildRet(returnValue);
@@ -151,10 +146,143 @@ public sealed class Codegen
                 }
 
                 if (printStmt.AppendNewLine)
+                {
                     WriterUtils.EmitSystemWrite(
                         "\n", _module, _context, _builder);
+                }
 
                 break;
+            case IfStatementNode ifStmt:
+                GenerateIfStatement(ifStmt);
+                break;
+        }
+    }
+
+
+    private void GenerateIfStatement(IfStatementNode statement)
+    {
+        var condition = GenerateExpression(statement.Condition);
+
+        if (condition.TypeOf.Kind != LLVMTypeKind.LLVMIntegerTypeKind ||
+            condition.TypeOf.IntWidth != 1)
+        {
+            throw new InvalidOperationException(
+                "If condition must be a boolean.");
+        }
+
+        var function = _builder.InsertBlock.Parent;
+
+        var thenBlock = _context.AppendBasicBlock(function, "if.then");
+        var mergeBlock = _context.AppendBasicBlock(function, "if.end");
+
+        LLVMBasicBlockRef elseBlock = default;
+
+        if (statement.ElseBody is not null)
+        {
+            elseBlock = _context.AppendBasicBlock(function, "if.else");
+        }
+
+        // Branch from the current condition block.
+        _builder.BuildCondBr(
+            condition,
+            thenBlock,
+            statement.ElseBody is not null
+                ? elseBlock
+                : mergeBlock);
+
+        // Generate the then branch.
+        _builder.PositionAtEnd(thenBlock);
+        GenerateStatements(statement.ThenBody);
+
+        var thenEndBlock = _builder.InsertBlock;
+        var thenCanContinue = !HasTerminator(thenEndBlock);
+
+        if (thenCanContinue)
+        {
+            _builder.BuildBr(mergeBlock);
+        }
+
+        // Generate the else branch, if present.
+        var elseCanContinue = statement.ElseBody is null;
+
+        if (statement.ElseBody is not null)
+        {
+            _builder.PositionAtEnd(elseBlock);
+            GenerateStatements(statement.ElseBody);
+
+            var elseEndBlock = _builder.InsertBlock;
+            elseCanContinue = !HasTerminator(elseEndBlock);
+
+            if (elseCanContinue)
+            {
+                _builder.BuildBr(mergeBlock);
+            }
+        }
+
+        // A merge block is reachable if at least one branch reaches it.
+        _builder.PositionAtEnd(mergeBlock);
+
+        if (!thenCanContinue && !elseCanContinue)
+        {
+            _builder.BuildUnreachable();
+        }
+    }
+
+
+    private static bool HasTerminator(LLVMBasicBlockRef block)
+    {
+        var lastInstruction = block.LastInstruction;
+
+        if (lastInstruction.IsNull)
+        {
+            return false;
+        }
+
+        return lastInstruction.InstructionOpcode is
+            LLVMOpcode.LLVMRet or
+            LLVMOpcode.LLVMBr or
+            LLVMOpcode.LLVMSwitch or
+            LLVMOpcode.LLVMIndirectBr or
+            LLVMOpcode.LLVMInvoke or
+            LLVMOpcode.LLVMUnreachable or
+            LLVMOpcode.LLVMResume or
+            LLVMOpcode.LLVMCleanupRet or
+            LLVMOpcode.LLVMCatchRet or
+            LLVMOpcode.LLVMCatchSwitch;
+    }
+
+
+    private void GenerateStatements(
+        IReadOnlyList<StatementNode> statements)
+    {
+        foreach (var statement in statements)
+        {
+            var currentBlock = _builder.InsertBlock;
+
+            // An empty block has no instructions, so it cannot have a terminator.
+            var lastInstruction = currentBlock.LastInstruction;
+
+            if (!lastInstruction.IsNull)
+            {
+                // Stop only if the last instruction is a terminator.
+                var opcode = lastInstruction.InstructionOpcode;
+
+                if (opcode is LLVMOpcode.LLVMRet
+                    or LLVMOpcode.LLVMBr
+                    or LLVMOpcode.LLVMSwitch
+                    or LLVMOpcode.LLVMIndirectBr
+                    or LLVMOpcode.LLVMInvoke
+                    or LLVMOpcode.LLVMUnreachable
+                    or LLVMOpcode.LLVMResume
+                    or LLVMOpcode.LLVMCleanupRet
+                    or LLVMOpcode.LLVMCatchRet
+                    or LLVMOpcode.LLVMCatchSwitch)
+                {
+                    break;
+                }
+            }
+
+            GenerateStatement(statement);
         }
     }
 
@@ -202,7 +330,9 @@ public sealed class Codegen
     private LLVMValueRef LoadVariable(string name)
     {
         if (_variables.TryGetValue(name, out var variable))
+        {
             return _builder.BuildLoad2(variable.LLVMType, variable.Allocation, name);
+        }
 
         throw new Exception(
             $"Compiler Error: Undefined identifier '{name}' reached backend.");
@@ -215,8 +345,10 @@ public sealed class Codegen
 
         if (left.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind
             || right.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
+        {
             throw new NotSupportedException(
                 "Pointer arithmetic is not supported.");
+        }
 
         var leftType = _semanticModel.GetExpressionType(binary.Left);
         var rightType = _semanticModel.GetExpressionType(binary.Right);
@@ -228,9 +360,11 @@ public sealed class Codegen
             or LLVMTypeKind.LLVMDoubleTypeKind)
         {
             if (left.TypeOf != right.TypeOf)
+            {
                 throw new InvalidOperationException(
                     $"Codegen received incompatible floating-point operand types: " +
                     $"'{leftType}' and '{rightType}'.");
+            }
 
             if (binary.Operator is
                 TypeConst.EqualsEquals
@@ -272,9 +406,11 @@ public sealed class Codegen
             }
 
             if (leftType != rightType)
+            {
                 throw new InvalidOperationException(
                     $"Codegen received incompatible operand types: " +
                     $"'{leftType}' and '{rightType}'.");
+            }
 
             return binary.Operator switch
             {
@@ -298,8 +434,10 @@ public sealed class Codegen
         // Integer-only operations and comparisons.
         if (left.TypeOf.Kind != LLVMTypeKind.LLVMIntegerTypeKind
             || right.TypeOf.Kind != LLVMTypeKind.LLVMIntegerTypeKind)
+        {
             throw new NotSupportedException(
                 $"Binary operator '{binary.Operator}' requires numeric operands.");
+        }
 
         // Comparisons produce an LLVM i1 value, representing Lumi's bool.
         if (binary.Operator is
@@ -311,9 +449,11 @@ public sealed class Codegen
             or TypeConst.GreaterThanOrEquals)
         {
             if (leftType != rightType)
+            {
                 throw new InvalidOperationException(
                     $"Codegen received incompatible operand types: " +
                     $"'{leftType}' and '{rightType}'.");
+            }
 
             var predicate = binary.Operator switch
             {
@@ -352,9 +492,11 @@ public sealed class Codegen
 
         // Integer arithmetic requires matching semantic types.
         if (leftType != rightType)
+        {
             throw new InvalidOperationException(
                 $"Codegen received incompatible operand types: " +
                 $"'{leftType}' and '{rightType}'.");
+        }
 
         var commonWidth = Math.Max(
             left.TypeOf.IntWidth,
@@ -472,20 +614,26 @@ public sealed class Codegen
             targetType.Kind != LLVMTypeKind.LLVMIntegerTypeKind)
         {
             if (sourceType == targetType)
+            {
                 return value;
+            }
 
             throw new NotSupportedException(
                 $"Cannot convert {sourceType} to {targetType}.");
         }
 
         if (sourceType.IntWidth == targetType.IntWidth)
+        {
             return value;
+        }
 
         if (sourceType.IntWidth < targetType.IntWidth)
+        {
             return _builder.BuildSExt(
                 value,
                 targetType,
                 name);
+        }
 
         return _builder.BuildTrunc(
             value,
@@ -507,7 +655,9 @@ public sealed class Codegen
             targetType.Kind != LLVMTypeKind.LLVMIntegerTypeKind)
         {
             if (sourceType == targetType)
+            {
                 return value;
+            }
 
             throw new NotSupportedException(
                 $"Cannot convert initializer to '{targetTypeName}'.");
@@ -517,21 +667,29 @@ public sealed class Codegen
         var targetWidth = targetType.IntWidth;
 
         if (sourceWidth == targetWidth)
+        {
             return value;
+        }
 
         if (sourceWidth > targetWidth)
+        {
             return _builder.BuildTrunc(value, targetType, name);
+        }
 
         // Integer literals currently represent non-negative values.
         // Their magnitude is preserved by zero extension.
         if (expression is LiteralNode<string>)
+        {
             return _builder.BuildZExt(value, targetType, name);
+        }
 
         // For variables, preserve their declared signedness.
         if (expression is IdentifierNode identifier && _variables.TryGetValue(identifier.Name, out var variable))
+        {
             return variable.IsUnsignedIntegerType()
                 ? _builder.BuildZExt(value, targetType, name)
                 : _builder.BuildSExt(value, targetType, name);
+        }
 
         // Fallback for integer expressions.
         return _builder.BuildSExt(value, targetType, name);

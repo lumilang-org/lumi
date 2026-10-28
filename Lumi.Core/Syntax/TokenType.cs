@@ -5,6 +5,8 @@ public enum TokenType
     KeywordStruct,
     KeywordFunc,
     KeywordReturn,
+    KeywordIf,
+    KeywordElse,
     PrintFunc,
 
     TypeByte,

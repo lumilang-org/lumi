@@ -119,6 +119,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
                 var value = ParseExpression();
                 return new ReturnStatementNode(value);
             }
+            case TokenType.KeywordIf:
+                return ParseIfStatement();
             case TokenType.PrintFunc:
             {
                 var functionName = Current.Value;
@@ -144,6 +146,46 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
                 return new ExpressionStatementNode(expr);
             }
         }
+    }
+
+    private IfStatementNode ParseIfStatement()
+    {
+        Consume(TokenType.KeywordIf);
+
+        var condition = ParseExpression();
+        var thenBody = ParseBlock();
+
+        IReadOnlyList<StatementNode>? elseBody = null;
+
+        if (Current.Type == TokenType.KeywordElse)
+        {
+            Advance();
+
+            if (Current.Type == TokenType.KeywordIf)
+                elseBody =
+                [
+                    ParseIfStatement()
+                ];
+            else
+                elseBody = ParseBlock();
+        }
+
+        return new IfStatementNode(condition, thenBody, elseBody);
+    }
+
+    private IReadOnlyList<StatementNode> ParseBlock()
+    {
+        Consume(TokenType.LBrace);
+
+        var statements = new List<StatementNode>();
+
+        while (Current.Type != TokenType.RBrace &&
+               Current.Type != TokenType.EndOfFile)
+            statements.Add(ParseStatement());
+
+        Consume(TokenType.RBrace);
+
+        return statements;
     }
 
     private ExpressionNode ParseExpression(

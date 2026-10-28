@@ -17,11 +17,12 @@ internal sealed class IntegerPrintEmitter(
         var i64 = context.Int64Type;
         var bytePointerType = LLVMTypeRef.CreatePointer(i8, 0);
 
+        var function = builder.InsertBlock.Parent;
+
         var normalized = IntegerNormalizer.NormalizeToInt32(
             value, context, builder);
 
         var buffer = PrintBuffer.Create(context, builder);
-        var function = builder.InsertBlock.Parent;
 
         var zero = LLVMValueRef.CreateConstInt(i32, 0);
         var one = LLVMValueRef.CreateConstInt(i32, 1);
@@ -41,7 +42,7 @@ internal sealed class IntegerPrintEmitter(
             zero,
             "itoa_is_negative");
 
-        // Negation wraps for INT32_MIN. Unsigned division handles
+        // Negation wraps for INT32_MIN; unsigned division handles
         // the resulting bit pattern correctly.
         var magnitude = builder.BuildSelect(
             isNegative,
@@ -52,7 +53,8 @@ internal sealed class IntegerPrintEmitter(
         builder.BuildStore(magnitude, valueSlot);
 
         var loopBlock = context.AppendBasicBlock(function, "itoa_loop");
-        var afterDigitsBlock = context.AppendBasicBlock(function, "itoa_after_digits");
+        var afterDigitsBlock = context.AppendBasicBlock(
+            function, "itoa_after_digits");
         var signBlock = context.AppendBasicBlock(function, "itoa_sign");
         var outputBlock = context.AppendBasicBlock(function, "itoa_output");
 
@@ -102,9 +104,11 @@ internal sealed class IntegerPrintEmitter(
             "itoa_has_more_digits");
 
         builder.BuildCondBr(
-            hasMoreDigits, loopBlock, afterDigitsBlock);
+            hasMoreDigits,
+            loopBlock,
+            afterDigitsBlock);
 
-        // After the loop, pointerSlot points one byte before the first digit.
+        // The pointer now points one byte before the first digit.
         builder.PositionAtEnd(afterDigitsBlock);
 
         var digitsStartMinusOne = builder.BuildLoad2(
@@ -119,9 +123,11 @@ internal sealed class IntegerPrintEmitter(
             "itoa_positive_start");
 
         builder.BuildCondBr(
-            isNegative, signBlock, outputBlock);
+            isNegative,
+            signBlock,
+            outputBlock);
 
-        // Write '-' immediately before the digits for negative numbers.
+        // Write '-' before the digits for negative numbers.
         builder.PositionAtEnd(signBlock);
 
         builder.BuildStore(
@@ -130,7 +136,7 @@ internal sealed class IntegerPrintEmitter(
 
         builder.BuildBr(outputBlock);
 
-        // PHI must be the first instruction in this block.
+        // The PHI must be the first instruction in this block.
         builder.PositionAtEnd(outputBlock);
 
         var outputStart = builder.BuildPhi(
@@ -142,7 +148,7 @@ internal sealed class IntegerPrintEmitter(
             new[] { afterDigitsBlock, signBlock },
             2);
 
-        // Calculate the number of bytes to write, excluding a newline.
+        // Calculate the number of bytes to write.
         var startAddress = builder.BuildPtrToInt(
             outputStart, i64, "itoa_start_addr");
 
@@ -168,5 +174,9 @@ internal sealed class IntegerPrintEmitter(
             writeFunction,
             new[] { stdout, outputStart, length },
             "itoa_write");
+
+        // Leave the builder at itoa_output.
+        // The caller is responsible for emitting subsequent instructions
+        // and eventually terminating this block.
     }
 }

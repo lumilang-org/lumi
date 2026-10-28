@@ -29,4 +29,6 @@ public static class TypeConst
     public const string LessThanOrEquals = "<=";
     public const string GreaterThan = ">";
     public const string GreaterThanOrEquals = ">=";
+    public const string If = "if";
+    public const string Else = "else";
 }

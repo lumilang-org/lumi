@@ -52,6 +52,29 @@ public sealed class TypeChecker
             case PrintStatementNode printStmt:
                 CheckExpression(printStmt.Expression, scope);
                 break;
+
+            case IfStatementNode ifStmt:
+                var conditionType = CheckExpression(ifStmt.Condition, scope);
+
+                if (conditionType != TypeConst.Bool)
+                    throw new Exception(
+                        $"Type Mismatch: An if condition must be '{TypeConst.Bool}', " +
+                        $"but got '{conditionType}'.");
+
+                var thenScope = new SymbolTable();
+
+                foreach (var branchStatement in ifStmt.ThenBody)
+                    CheckStatement(branchStatement, thenScope, expectedReturnType);
+
+                if (ifStmt.ElseBody is not null)
+                {
+                    var elseScope = new SymbolTable();
+
+                    foreach (var branchStatement in ifStmt.ElseBody)
+                        CheckStatement(branchStatement, elseScope, expectedReturnType);
+                }
+
+                break;
         }
     }
 

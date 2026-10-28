@@ -70,3 +70,16 @@ public sealed class LiteralNode<T>(T value) : LiteralNode
 {
     public T Value { get; } = value;
 }
+
+public sealed class IfStatementNode(
+    ExpressionNode condition,
+    IReadOnlyList<StatementNode> thenBody,
+    IReadOnlyList<StatementNode>? elseBody = null)
+    : StatementNode
+{
+    public ExpressionNode Condition { get; } = condition;
+
+    public IReadOnlyList<StatementNode> ThenBody { get; } = thenBody;
+
+    public IReadOnlyList<StatementNode>? ElseBody { get; } = elseBody;
+}

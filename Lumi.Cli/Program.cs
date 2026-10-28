@@ -6,8 +6,10 @@ const string outputFile = "lumi.o";
 
 var lumiCode = @"
             func main() -> void {
-                f64 result = 125.2 / 3.0
-                println(result)
+                bool isReady = true
+
+                if isReady { i32 variable = 20 println(variable) }
+                else { println(2) }
             }
         ";
 
