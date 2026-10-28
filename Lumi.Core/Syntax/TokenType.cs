@@ -19,6 +19,10 @@ public enum TokenType
     TypeU32,
     TypeU64,
 
+    TypeF16,
+    TypeF32,
+    TypeF64,
+
     Identifier,
     Number,
     Character, // Char literal

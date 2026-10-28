@@ -6,8 +6,8 @@ namespace Lumi.LLVM.Utils;
 
 public static class WriterUtils
 {
-    internal static (LLVMValueRef Func, LLVMTypeRef FuncType)
-        GetOrInsertWrite(LLVMModuleRef module, LLVMContextRef context)
+    internal static (LLVMValueRef Func, LLVMTypeRef FuncType) GetOrInsertWrite(LLVMModuleRef module,
+        LLVMContextRef context)
     {
         var bytePointerType = LLVMTypeRef.CreatePointer(context.Int8Type, 0);
 
@@ -26,6 +26,33 @@ public static class WriterUtils
             return (function, functionType);
 
         function = module.AddFunction("write", functionType);
+
+        return (function, functionType);
+    }
+
+    public static (LLVMValueRef Function, LLVMTypeRef Type) GetOrInsertSnprintf(
+        LLVMModuleRef module,
+        LLVMContextRef context)
+    {
+        var i8 = context.Int8Type;
+        var i32 = context.Int32Type;
+        var i64 = context.Int64Type;
+        var bytePointerType = LLVMTypeRef.CreatePointer(i8, 0);
+
+        // int snprintf(char *str, size_t size, const char *format, ...);
+        var functionType = LLVMTypeRef.CreateFunction(
+            i32,
+            new[]
+            {
+                bytePointerType,
+                i64,
+                bytePointerType
+            },
+            true);
+
+        var function = module.GetNamedFunction("snprintf");
+
+        if (function.Handle == IntPtr.Zero) function = module.AddFunction("snprintf", functionType);
 
         return (function, functionType);
     }
@@ -80,6 +107,13 @@ public static class WriterUtils
         LLVMBuilderRef builder)
     {
         new BooleanPrintEmitter(module, context, builder)
+            .Emit(printValue);
+    }
+
+    internal static void EmitPrintFloat(LLVMValueRef printValue, LLVMModuleRef module, LLVMContextRef context,
+        LLVMBuilderRef builder)
+    {
+        new FloatingPointPrintEmitter(module, context, builder)
             .Emit(printValue);
     }
 }

@@ -9,16 +9,19 @@ public sealed class Lexer
         { "struct", TokenType.KeywordStruct },
         { "func", TokenType.KeywordFunc },
         { "return", TokenType.KeywordReturn },
-        { "char", TokenType.TypeChar },
-        { "i16", TokenType.TypeI16 },
-        { "i32", TokenType.TypeI32 },
-        { "i64", TokenType.TypeI64 },
-        { "u16", TokenType.TypeU16 },
-        { "u32", TokenType.TypeU32 },
-        { "u64", TokenType.TypeU64 },
+        { TypeConst.Char, TokenType.TypeChar },
+        { TypeConst.I16, TokenType.TypeI16 },
+        { TypeConst.I32, TokenType.TypeI32 },
+        { TypeConst.I64, TokenType.TypeI64 },
+        { TypeConst.U16, TokenType.TypeU16 },
+        { TypeConst.U32, TokenType.TypeU32 },
+        { TypeConst.U64, TokenType.TypeU64 },
         { "byte", TokenType.TypeByte },
         { "bool", TokenType.TypeBool },
-        { "void", TokenType.TypeVoid }
+        { "void", TokenType.TypeVoid },
+        { TypeConst.F16, TokenType.TypeF16 },
+        { TypeConst.F32, TokenType.TypeF32 },
+        { TypeConst.F64, TokenType.TypeF64 }
     };
 
     private readonly string _source;
@@ -80,7 +83,7 @@ public sealed class Lexer
         var lexemeSpan = _source.AsSpan(start, _position - start);
         var value = lexemeSpan.ToString();
 
-        if (value is TypeUtils.True or TypeUtils.False) return new Token(TokenType.BooleanLiteral, value);
+        if (value is TypeConst.True or TypeConst.False) return new Token(TokenType.BooleanLiteral, value);
 
         if (Keywords.TryGetValue(value, out var matchedType)) return new Token(matchedType, value);
 
@@ -90,8 +93,24 @@ public sealed class Lexer
     private Token ReadNumber()
     {
         var start = _position;
-        while (_currentChar != '\0' && char.IsDigit(_currentChar)) Advance();
-        return new Token(TokenType.Number, _source[start.._position]);
+
+        while (!IsAtEnd() && char.IsDigit(_currentChar))
+            Advance();
+
+        if (!IsAtEnd() && _currentChar == '.')
+        {
+            Advance();
+
+            if (IsAtEnd() || !char.IsDigit(_currentChar))
+                throw new Exception(
+                    "Syntax Error: Expected a digit after decimal point.");
+
+            while (!IsAtEnd() && char.IsDigit(_currentChar))
+                Advance();
+        }
+
+        var value = _source[start.._position];
+        return new Token(TokenType.Number, value);
     }
 
     private Token ReadOperatorOrSymbol()

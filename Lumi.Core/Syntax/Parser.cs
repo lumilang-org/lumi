@@ -1,3 +1,4 @@
+using System.Globalization;
 using Lumi.Core.Ast;
 
 namespace Lumi.Core.Syntax;
@@ -94,6 +95,9 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
                 TokenType.TypeU16 or
                 TokenType.TypeU32 or
                 TokenType.TypeU64 or
+                TokenType.TypeF16 or
+                TokenType.TypeF32 or
+                TokenType.TypeF64 or
                 TokenType.TypeBool or
                 TokenType.TypeChar:
             {
@@ -221,9 +225,23 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
 
     private ExpressionNode ParseNumberLiteral()
     {
-        var node = new LiteralNode<string>(Current.Value);
+        var value = Current.Value;
         Advance();
-        return node;
+
+        if (value.Contains('.'))
+        {
+            if (!double.TryParse(
+                    value,
+                    NumberStyles.AllowDecimalPoint,
+                    CultureInfo.InvariantCulture,
+                    out var decimalValue))
+                throw new Exception(
+                    $"Syntax Error: Invalid decimal literal '{value}'");
+
+            return new LiteralNode<double>(decimalValue);
+        }
+
+        return new LiteralNode<string>(value);
     }
 
     private ExpressionNode ParseIdentifier()

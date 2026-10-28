@@ -21,8 +21,10 @@ public sealed class TypeChecker
         switch (statement)
         {
             case VariableDeclarationNode varDecl:
-                // Check the type of the assignment value
-                var initializerType = CheckExpression(varDecl.Initializer, scope);
+                var initializerType = CheckExpression(
+                    varDecl.Initializer,
+                    scope,
+                    varDecl.Type);
 
                 if (varDecl.Type.StartsWith('u') &&
                     varDecl.Initializer is UnaryExpressionNode { Operator: "-" })
@@ -34,7 +36,6 @@ public sealed class TypeChecker
                         $"Type Mismatch: Cannot assign type '{initializerType}' " +
                         $"to a variable of type '{varDecl.Type}'");
 
-                // Register variable in the current local scope
                 scope.Declare(varDecl.Name, varDecl.Type);
                 break;
 
@@ -54,21 +55,32 @@ public sealed class TypeChecker
         }
     }
 
-    private string CheckExpression(ExpressionNode expression, SymbolTable scope)
+    private string CheckExpression(
+        ExpressionNode expression,
+        SymbolTable scope,
+        string? expectedType = null)
     {
         var type = expression switch
         {
-            LiteralNode<string> node => InferBoundsUtils.InferNumericBounds(node),
+            LiteralNode<string> node =>
+                InferBoundsUtils.InferNumericBounds(node),
 
-            IdentifierNode id => scope.Lookup(id.Name),
+            LiteralNode<double> node =>
+                expectedType is not null && IsFloatingPointType(expectedType)
+                    ? expectedType
+                    : InferBoundsUtils.InferFloating(node),
 
-            BinaryExpressionNode binary => CheckBinaryExpression(binary, scope),
+            IdentifierNode id =>
+                scope.Lookup(id.Name),
 
-            UnaryExpressionNode unary => CheckUnaryExpression(unary, scope),
+            BinaryExpressionNode binary =>
+                CheckBinaryExpression(binary, scope, expectedType),
 
-            LiteralNode<char> _ => TypeUtils.Char,
+            UnaryExpressionNode unary =>
+                CheckUnaryExpression(unary, scope),
 
-            LiteralNode<bool> _ => TypeUtils.Bool,
+            LiteralNode<char> _ => TypeConst.Char,
+            LiteralNode<bool> _ => TypeConst.Bool,
 
             _ => throw new Exception(
                 "Unknown expression type encountered during analysis.")
@@ -78,13 +90,16 @@ public sealed class TypeChecker
         return type;
     }
 
-    private string CheckUnaryExpression(UnaryExpressionNode unary, SymbolTable scope)
+    private string CheckUnaryExpression(
+        UnaryExpressionNode unary,
+        SymbolTable scope)
     {
         var operandType = CheckExpression(unary.Operand, scope);
 
         return unary.Operator switch
         {
-            "-" when operandType is "i8" or "i16" or "i32" or "i64"
+            "-" when IsSignedIntegerType(operandType)
+                     || IsFloatingPointType(operandType)
                 => operandType,
 
             "-" => throw new Exception(
@@ -95,87 +110,132 @@ public sealed class TypeChecker
         };
     }
 
+    private static bool IsSignedIntegerType(string type)
+    {
+        return type is "i8" or "i16" or "i32" or "i64";
+    }
+
     private string CheckBinaryExpression(
         BinaryExpressionNode binary,
-        SymbolTable scope)
+        SymbolTable scope,
+        string? expectedType = null)
     {
-        var leftType = CheckExpression(binary.Left, scope);
-        var rightType = CheckExpression(binary.Right, scope);
+        var leftType = CheckExpression(binary.Left, scope, expectedType);
+        var rightType = CheckExpression(binary.Right, scope, expectedType);
 
-        // Arithmetic operators require matching integer types.
-        if (binary.Operator is TypeUtils.Plus or TypeUtils.Minus or TypeUtils.Star or TypeUtils.Slash)
+        // Arithmetic operators require matching numeric types.
+        if (binary.Operator is TypeConst.Plus
+            or TypeConst.Minus
+            or TypeConst.Star
+            or TypeConst.Slash)
         {
             if (leftType != rightType)
                 throw new Exception(
                     $"Type Mismatch: Operator '{binary.Operator}' " +
                     $"cannot be applied to types '{leftType}' and '{rightType}'.");
 
-            if (!IsIntegerType(leftType))
+            if (!IsIntegerType(leftType) && !IsFloatingPointType(leftType))
                 throw new Exception(
                     $"Type Mismatch: Operator '{binary.Operator}' " +
-                    $"requires integer operands, got '{leftType}'.");
+                    $"requires numeric operands, got '{leftType}'.");
 
             return leftType;
         }
 
         // Comparison operators produce bool.
-        if (binary.Operator is
-            TypeUtils.EqualsEquals or
-            TypeUtils.BangEquals or
-            TypeUtils.LessThan or
-            TypeUtils.LessThanOrEquals or
-            TypeUtils.GreaterThan or
-            TypeUtils.GreaterThanOrEquals)
+        if (binary.Operator is TypeConst.EqualsEquals
+            or TypeConst.BangEquals
+            or TypeConst.LessThan
+            or TypeConst.LessThanOrEquals
+            or TypeConst.GreaterThan
+            or TypeConst.GreaterThanOrEquals)
         {
             if (leftType != rightType)
                 throw new Exception(
                     $"Type Mismatch: Operator '{binary.Operator}' " +
                     $"cannot compare types '{leftType}' and '{rightType}'.");
 
-            if (!IsIntegerType(leftType) && leftType != TypeUtils.Char)
+            var isEquality = binary.Operator is "==" or "!=";
+
+            if (!IsIntegerType(leftType)
+                && !IsFloatingPointType(leftType)
+                && leftType != TypeConst.Char
+                && !(leftType == TypeConst.Bool && isEquality))
                 throw new Exception(
                     $"Type Mismatch: Operator '{binary.Operator}' " +
                     $"cannot compare values of type '{leftType}'.");
 
-            // Equality comparisons can also support bool values.
-            if (leftType == TypeUtils.Bool &&
-                binary.Operator is not ("==" or "!="))
+            if (leftType == TypeConst.Bool && !isEquality)
                 throw new Exception(
                     $"Type Mismatch: Operator '{binary.Operator}' " +
                     "does not support boolean operands.");
 
-            return TypeUtils.Bool;
+            if (leftType == TypeConst.Char && !isEquality)
+                throw new Exception(
+                    $"Type Mismatch: Operator '{binary.Operator}' " +
+                    "does not support ordering comparisons on characters.");
+
+            return TypeConst.Bool;
         }
 
         throw new Exception(
             $"Unsupported binary operator: '{binary.Operator}'.");
     }
 
-
-    private static bool CanAssign(string targetType, string sourceType, ExpressionNode expression)
+    private static bool CanAssign(
+        string targetType,
+        string sourceType,
+        ExpressionNode expression)
     {
-        if (targetType == sourceType) return true;
+        if (targetType == sourceType)
+            return true;
 
-        if (expression is LiteralNode<string> literal && IsIntegerType(targetType))
-            return FitsInType(literal.Value, targetType);
+        if (expression is LiteralNode<string> integerLiteral
+            && IsIntegerType(targetType))
+            return FitsInType(integerLiteral.Value, targetType);
 
-        if (targetType == TypeUtils.Char && expression is LiteralNode<char> _) return true;
+        if (expression is LiteralNode<double> floatingLiteral
+            && IsFloatingPointType(targetType))
+            return double.IsFinite(floatingLiteral.Value)
+                   && targetType switch
+                   {
+                       var t when t == TypeConst.F16 =>
+                           Math.Abs(floatingLiteral.Value) <= 65504.0,
+
+                       var t when t == TypeConst.F32 =>
+                           Math.Abs(floatingLiteral.Value) <= float.MaxValue,
+
+                       var t when t == TypeConst.F64 => true,
+
+                       _ => false
+                   };
+
+        if (targetType == TypeConst.Char
+            && expression is LiteralNode<char>)
+            return true;
 
         if (expression is UnaryExpressionNode
             {
                 Operator: "-",
-                Operand: LiteralNode<string> lit
+                Operand: LiteralNode<string> integerOperand
             }
-            && targetType is "i8" or "i16" or "i32" or "i64")
-            return NegativeLiteralFitsInType(lit.Value, targetType);
+            && IsSignedIntegerType(targetType))
+            return NegativeLiteralFitsInType(
+                integerOperand.Value,
+                targetType);
 
         return false;
     }
 
     private static bool IsIntegerType(string type)
     {
-        return type is "i8" or "i16" or "i32" or "i64"
-            or "u8" or "u16" or "u32" or "u64";
+        return type is TypeConst.I16 or TypeConst.I32 or TypeConst.I64
+            or TypeConst.U16 or TypeConst.U32 or TypeConst.U64;
+    }
+
+    private static bool IsFloatingPointType(string type)
+    {
+        return type is TypeConst.F16 or TypeConst.F32 or TypeConst.F64;
     }
 
     private static bool FitsInType(string value, string type)
