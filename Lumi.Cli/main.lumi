@@ -1,10 +1,5 @@
-func main() -> i32 {
-    i32 number = 2
-
-    if number > 5 {
-        number = 20
-    }
-
-    println(number)
-    return number
+func main() -> void {
+    println(true || false && false)
+    println(false || true && false)
+    println(true && true)
 }

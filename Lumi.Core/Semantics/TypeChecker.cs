@@ -170,6 +170,11 @@ public sealed class TypeChecker
             "-" => throw new Exception(
                 $"Type Mismatch: Unary '-' cannot be applied to type '{operandType}'."),
 
+            "!" when operandType == TypeConst.Bool => TypeConst.Bool,
+
+            "!" => throw new Exception(
+                $"Type Error: Logical NOT requires 'bool', but got '{operandType}'."),
+
             _ => throw new Exception(
                 $"Unsupported unary operator: '{unary.Operator}'.")
         };
@@ -213,6 +218,18 @@ public sealed class TypeChecker
                 binary,
                 leftType,
                 rightType);
+        }
+
+        if (binary.Operator is TypeConst.LogicalAnd or TypeConst.LogicalOr)
+        {
+            if (leftType != TypeConst.Bool || rightType != TypeConst.Bool)
+            {
+                throw new Exception(
+                    $"Type Mismatch: Operator '{binary.Operator}' " +
+                    $"requires boolean operands, got '{leftType}' and '{rightType}'.");
+            }
+
+            return TypeConst.Bool;
         }
 
         throw new Exception(

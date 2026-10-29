@@ -352,6 +352,10 @@ public sealed class Codegen
                     or LLVMTypeKind.LLVMDoubleTypeKind =>
                 _builder.BuildFNeg(operand, "fnegtmp"),
 
+            "!" => _builder.BuildNot(
+                operand,
+                "logical.not"),
+
             "-" => throw new NotSupportedException(
                 "Unary '-' requires a numeric operand."),
 
@@ -372,6 +376,11 @@ public sealed class Codegen
 
     private LLVMValueRef GenerateBinary(BinaryExpressionNode binary)
     {
+        if (binary.Operator is TypeConst.LogicalAnd or TypeConst.LogicalOr)
+        {
+            return GenerateLogicalBinary(binary);
+        }
+
         var left = GenerateExpression(binary.Left);
         var right = GenerateExpression(binary.Right);
 
@@ -527,6 +536,58 @@ public sealed class Codegen
             _ => throw new NotSupportedException(
                 $"Unsupported integer operator: {binary.Operator}")
         };
+    }
+
+    private LLVMValueRef GenerateLogicalBinary(BinaryExpressionNode binary)
+    {
+        var isAnd = binary.Operator == TypeConst.LogicalAnd;
+
+        var left = GenerateExpression(binary.Left);
+        var leftEndBlock = _builder.InsertBlock;
+
+        var function = leftEndBlock.Parent;
+
+        var rightBlock = _context.AppendBasicBlock(
+            function,
+            isAnd ? "and.rhs" : "or.rhs");
+
+        var mergeBlock = _context.AppendBasicBlock(
+            function,
+            isAnd ? "and.end" : "or.end");
+
+        if (isAnd)
+        {
+            _builder.BuildCondBr(left, rightBlock, mergeBlock);
+        }
+        else
+        {
+            _builder.BuildCondBr(left, mergeBlock, rightBlock);
+        }
+
+        _builder.PositionAtEnd(rightBlock);
+
+        var right = GenerateExpression(binary.Right);
+        var rightEndBlock = _builder.InsertBlock;
+
+        if (!HasTerminator(rightEndBlock))
+        {
+            _builder.BuildBr(mergeBlock);
+        }
+
+        _builder.PositionAtEnd(mergeBlock);
+
+        var shortCircuitValue = LLVMValueRef.CreateConstInt(
+            _context.Int1Type,
+            isAnd ? 0UL : 1UL);
+
+        var phi = _builder.BuildPhi(_context.Int1Type, "logical.result");
+
+        phi.AddIncoming(
+            [shortCircuitValue, right],
+            [leftEndBlock, rightEndBlock],
+            2);
+
+        return phi;
     }
 
     private (LLVMValueRef Left, LLVMValueRef Right, string CommonType) PromoteIntegerOperands(

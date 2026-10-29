@@ -47,6 +47,10 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
     {
         return type switch
         {
+            TokenType.LogicalOr => Precedence.LogicalOr,
+
+            TokenType.LogicalAnd => Precedence.LogicalAnd,
+
             TokenType.EqualEqual
                 or TokenType.BangEqual
                 or TokenType.LessThan
@@ -242,10 +246,11 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
         {
             TokenType.Number => ParseNumberLiteral(),
             TokenType.Identifier => ParseIdentifier(),
-            TokenType.Minus => ParseUnaryExpression(),
             TokenType.Character => ParseCharLiteral(),
             TokenType.BooleanLiteral => ParseBooleanLiteral(),
             TokenType.LParen => ParseGroupedExpression(),
+            TokenType.LogicalNot or
+                TokenType.Minus => ParseUnaryExpression(),
             _ => throw new Exception($"Syntax Error: Unexpected prefix token {Current.Type}")
         };
     }

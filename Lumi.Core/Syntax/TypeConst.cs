@@ -31,4 +31,6 @@ public static class TypeConst
     public const string GreaterThanOrEquals = ">=";
     public const string If = "if";
     public const string Else = "else";
+    public const string LogicalAnd = "&&";
+    public const string LogicalOr = "||";
 }
