@@ -7,6 +7,7 @@ namespace Lumi.Core.Semantics;
 
 public sealed class TypeChecker
 {
+    private int _loopDepth;
     public SemanticModel SemanticModel { get; } = new();
 
     public void CheckFunction(FunctionDeclarationNode func)
@@ -112,13 +113,37 @@ public sealed class TypeChecker
 
                 var bodyScope = new SymbolTable(scope);
 
-                foreach (var stmt in whileStatement.Body)
+                _loopDepth++;
+
+                try
                 {
-                    CheckStatement(stmt, bodyScope, expectedReturnType);
+                    foreach (var stmt in whileStatement.Body)
+                    {
+                        CheckStatement(stmt, bodyScope, expectedReturnType);
+                    }
+                }
+                finally
+                {
+                    _loopDepth--;
                 }
 
                 break;
             }
+            case BreakStatementNode:
+                if (_loopDepth == 0)
+                {
+                    throw new Exception("'break' can only be used inside a loop.");
+                }
+
+                break;
+
+            case ContinueStatementNode:
+                if (_loopDepth == 0)
+                {
+                    throw new Exception("'continue' can only be used inside a loop.");
+                }
+
+                break;
             case AssignmentStatementNode assignment:
             {
                 var variableType = scope.Lookup(assignment.Name);

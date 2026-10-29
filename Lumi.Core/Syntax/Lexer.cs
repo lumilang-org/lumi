@@ -10,6 +10,8 @@ public sealed class Lexer
         { "func", TokenType.KeywordFunc },
         { "return", TokenType.KeywordReturn },
         { TypeConst.While, TokenType.KeywordWhile },
+        { TypeConst.Break, TokenType.KeywordBreak },
+        { TypeConst.Continue, TokenType.KeywordContinue },
         { TypeConst.Char, TokenType.TypeChar },
         { TypeConst.I16, TokenType.TypeI16 },
         { TypeConst.I32, TokenType.TypeI32 },

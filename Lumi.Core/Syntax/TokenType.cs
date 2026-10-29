@@ -7,6 +7,8 @@ public enum TokenType
     KeywordReturn,
     KeywordIf,
     KeywordWhile,
+    KeywordBreak,
+    KeywordContinue,
     KeywordElse,
     PrintFunc,
 

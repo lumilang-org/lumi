@@ -12,6 +12,8 @@ public sealed class Codegen
     private readonly LLVMBuilderRef _builder;
     private readonly LLVMContextRef _context;
     private readonly LlvmTypeHelper _llvmTypeHelper;
+
+    private readonly Stack<LoopTargets> _loopTargets = new();
     private readonly LLVMModuleRef _module;
     private readonly SemanticModel _semanticModel;
 
@@ -175,6 +177,13 @@ public sealed class Codegen
 
                 break;
             }
+            case BreakStatementNode:
+                GenerateBreakStatement();
+                break;
+
+            case ContinueStatementNode:
+                GenerateContinueStatement();
+                break;
         }
     }
 
@@ -186,34 +195,50 @@ public sealed class Codegen
         var bodyBlock = _context.AppendBasicBlock(function, "while.body");
         var exitBlock = _context.AppendBasicBlock(function, "while.exit");
 
-        // Enter the loop by evaluating its condition.
+        // Enter the loop.
         _builder.BuildBr(conditionBlock);
 
-        // Condition: branch to the body or exit.
+        // Evaluate the condition.
         _builder.PositionAtEnd(conditionBlock);
 
         var condition = GenerateExpression(whileStmt.Condition);
 
         _builder.BuildCondBr(condition, bodyBlock, exitBlock);
 
-        // Body: execute statements, then return to the condition.
-        _builder.PositionAtEnd(bodyBlock);
+        // Register targets for break and continue.
+        _loopTargets.Push(new LoopTargets(
+            exitBlock,
+            conditionBlock));
 
-        foreach (var statement in whileStmt.Body)
+        try
         {
-            GenerateStatement(statement);
+            _builder.PositionAtEnd(bodyBlock);
+
+            foreach (var statement in whileStmt.Body)
+            {
+                GenerateStatement(statement);
+
+                // Don't generate more instructions after a terminator.
+                if (_builder.InsertBlock.Terminator.Handle != IntPtr.Zero)
+                {
+                    break;
+                }
+            }
+
+            // Return to the condition if the body hasn't terminated.
+            if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+            {
+                _builder.BuildBr(conditionBlock);
+            }
+        }
+        finally
+        {
+            _loopTargets.Pop();
         }
 
-        // A return statement may already have terminated this block.
-        if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
-        {
-            _builder.BuildBr(conditionBlock);
-        }
-
-        // Continue generating subsequent statements after the loop.
+        // Continue generating after the loop.
         _builder.PositionAtEnd(exitBlock);
     }
-
 
     private void GenerateIfStatement(IfStatementNode statement)
     {
@@ -258,7 +283,8 @@ public sealed class Codegen
         }
 
         var thenEndBlock = _builder.InsertBlock;
-        var thenCanContinue = !HasTerminator(thenEndBlock);
+
+        var thenCanContinue = thenEndBlock.Terminator.Handle == IntPtr.Zero;
 
         if (thenCanContinue)
         {
@@ -284,7 +310,8 @@ public sealed class Codegen
             }
 
             var elseEndBlock = _builder.InsertBlock;
-            elseCanContinue = !HasTerminator(elseEndBlock);
+
+            elseCanContinue = elseEndBlock.Terminator.Handle == IntPtr.Zero;
 
             if (elseCanContinue)
             {
@@ -302,6 +329,28 @@ public sealed class Codegen
         }
 
         _builder.PositionAtEnd(mergeBlock);
+    }
+
+    private void GenerateBreakStatement()
+    {
+        if (_loopTargets.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "'break' can only be used inside a loop.");
+        }
+
+        _builder.BuildBr(_loopTargets.Peek().BreakTarget);
+    }
+
+    private void GenerateContinueStatement()
+    {
+        if (_loopTargets.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "'continue' can only be used inside a loop.");
+        }
+
+        _builder.BuildBr(_loopTargets.Peek().ContinueTarget);
     }
 
     private static bool HasTerminator(LLVMBasicBlockRef block)
@@ -969,4 +1018,8 @@ public sealed class Codegen
                 $"Unsupported shift operator: '{binary.Operator}'.")
         };
     }
+
+    private sealed record LoopTargets(
+        LLVMBasicBlockRef BreakTarget,
+        LLVMBasicBlockRef ContinueTarget);
 }

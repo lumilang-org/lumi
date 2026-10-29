@@ -39,4 +39,6 @@ public static class TypeConst
     public const string ShiftLeft = "<<";
     public const string ShiftRight = ">>";
     public const string While = "while";
+    public const string Break = "break";
+    public const string Continue = "continue";
 }

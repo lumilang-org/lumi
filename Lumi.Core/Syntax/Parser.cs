@@ -150,6 +150,13 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
                 return ParseIfStatement();
             case TokenType.KeywordWhile:
                 return ParseWhileStatement();
+            case TokenType.KeywordBreak:
+                Advance();
+                return new BreakStatementNode();
+
+            case TokenType.KeywordContinue:
+                Advance();
+                return new ContinueStatementNode();
             case TokenType.PrintFunc:
             {
                 var functionName = Current.Value;

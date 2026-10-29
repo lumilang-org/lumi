@@ -10,9 +10,9 @@ public abstract class ExpressionNode : ASTNode
 }
 
 // Base class for statements that perform actions (e.g., variable declarations)
-public abstract class StatementNode : ASTNode
-{
-}
+public abstract class StatementNode : ASTNode;
+
+public sealed class ContinueStatementNode : StatementNode;
 
 public sealed class BreakStatementNode : StatementNode;
 
