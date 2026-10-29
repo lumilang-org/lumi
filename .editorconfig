@@ -1,0 +1,36 @@
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+indent_style = space
+indent_size = 4
+tab_width = 4
+trim_trailing_whitespace = true
+
+[*.cs]
+indent_style = space
+indent_size = 4
+tab_width = 4
+
+# Braces and code blocks
+csharp_prefer_braces = true:warning
+csharp_new_line_before_open_brace = all
+
+# Spacing
+csharp_space_after_keywords_in_control_flow_statements = true
+csharp_space_around_binary_operators = before_and_after
+
+# Naming and style
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+
+# Use explicit accessibility modifiers
+dotnet_style_require_accessibility_modifiers = always:warning
+
+# JetBrains Rider formatting
+ij_csharp_blank_lines_around_method = 1
+ij_csharp_blank_lines_around_class = 1
+ij_csharp_blank_lines_around_namespace = 1
