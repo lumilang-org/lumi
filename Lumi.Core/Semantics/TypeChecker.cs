@@ -49,48 +49,70 @@ public sealed class TypeChecker
             case ExpressionStatementNode exprStmt:
                 CheckExpression(exprStmt.Expression, scope);
                 break;
-            case ReturnStatementNode retStmt:
-                var actualReturnType = CheckExpression(retStmt.Value, scope);
 
-                if (actualReturnType != expectedReturnType)
+            case ReturnStatementNode returnStatement:
+            {
+                var returnType = CheckExpression(
+                    returnStatement.Value,
+                    scope,
+                    expectedReturnType);
+
+                if (returnType != expectedReturnType)
                 {
                     throw new Exception(
-                        $"Type Mismatch: Function expects to return '{expectedReturnType}' but got '{actualReturnType}' instead.");
+                        $"Type Mismatch: Function expects to return '{expectedReturnType}' " +
+                        $"but got '{returnType}' instead.");
                 }
 
                 break;
+            }
             case PrintStatementNode printStmt:
                 CheckExpression(printStmt.Expression, scope);
                 break;
 
-            case IfStatementNode ifStmt:
-                var conditionType = CheckExpression(ifStmt.Condition, scope);
+            case IfStatementNode ifStatement:
+            {
+                var conditionType = CheckExpression(ifStatement.Condition, scope);
 
                 if (conditionType != TypeConst.Bool)
                 {
                     throw new Exception(
-                        $"Type Mismatch: An if condition must be '{TypeConst.Bool}', " +
-                        $"but got '{conditionType}'.");
+                        $"Type Mismatch: An if condition must be 'bool', but got '{conditionType}'.");
                 }
 
-                var thenScope = new SymbolTable();
+                var thenScope = new SymbolTable(scope);
 
-                foreach (var branchStatement in ifStmt.ThenBody)
+                foreach (var stmt in ifStatement.ThenBody)
                 {
-                    CheckStatement(branchStatement, thenScope, expectedReturnType);
+                    CheckStatement(stmt, thenScope, expectedReturnType);
                 }
 
-                if (ifStmt.ElseBody is not null)
+                if (ifStatement.ElseBody is not null)
                 {
-                    var elseScope = new SymbolTable();
+                    var elseScope = new SymbolTable(scope);
 
-                    foreach (var branchStatement in ifStmt.ElseBody)
+                    foreach (var stmt in ifStatement.ElseBody)
                     {
-                        CheckStatement(branchStatement, elseScope, expectedReturnType);
+                        CheckStatement(stmt, elseScope, expectedReturnType);
                     }
                 }
 
                 break;
+            }
+            case AssignmentStatementNode assignment:
+            {
+                var variableType = scope.Lookup(assignment.Name);
+                var valueType = CheckExpression(assignment.Value, scope, variableType);
+
+                if (!CanAssign(variableType, valueType, assignment.Value))
+                {
+                    throw new Exception(
+                        $"Type Mismatch: Cannot assign '{valueType}' to variable " +
+                        $"'{assignment.Name}' of type '{variableType}'.");
+                }
+
+                break;
+            }
         }
     }
 

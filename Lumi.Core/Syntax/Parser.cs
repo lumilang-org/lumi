@@ -14,22 +14,33 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
     private Token Peek(int offset)
     {
         var index = _position + offset;
-        if (index >= tokens.Count) return tokens[^1]; // Always return the final EOF token if out of range
+        if (index >= tokens.Count)
+        {
+            return tokens[^1]; // Always return the final EOF token if out of range
+        }
+
         return tokens[index];
     }
 
     private void Advance()
     {
-        if (_position < tokens.Count - 1) _position++;
+        if (_position < tokens.Count - 1)
+        {
+            _position++;
+        }
     }
 
     private void Consume(TokenType type)
     {
         if (Current.Type == type)
+        {
             Advance();
+        }
         else
+        {
             throw new Exception(
                 $"Syntax Error: Expected token {type}, got {Current.Type} ('{Current.Value}') at position {_position}");
+        }
     }
 
     private Precedence GetPrecedence(TokenType type)
@@ -76,8 +87,10 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
 
         var body = new List<StatementNode>();
         while (Current.Type != TokenType.RBrace && Current.Type != TokenType.EndOfFile)
+        {
             body
                 .Add(ParseStatement());
+        }
 
         Consume(TokenType.RBrace);
 
@@ -130,14 +143,27 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
                 Consume(TokenType.LParen);
 
                 if (Current.Type == TokenType.RParen)
+                {
                     throw new Exception(
                         $"{Current.Value}: expected an expression inside {functionName}.");
+                }
 
                 var expression = ParseExpression();
 
                 Consume(TokenType.RParen);
 
                 return new PrintStatementNode(expression, appendNewline);
+            }
+            case TokenType.Identifier when Next.Type == TokenType.Assign:
+            {
+                var name = Current.Value;
+                Advance(); // identifier
+
+                Consume(TokenType.Assign);
+
+                var value = ParseExpression();
+
+                return new AssignmentStatementNode(name, value);
             }
             default:
             {
@@ -162,12 +188,16 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
             Advance();
 
             if (Current.Type == TokenType.KeywordIf)
+            {
                 elseBody =
                 [
                     ParseIfStatement()
                 ];
+            }
             else
+            {
                 elseBody = ParseBlock();
+            }
         }
 
         return new IfStatementNode(condition, thenBody, elseBody);
@@ -181,7 +211,9 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
 
         while (Current.Type != TokenType.RBrace &&
                Current.Type != TokenType.EndOfFile)
+        {
             statements.Add(ParseStatement());
+        }
 
         Consume(TokenType.RBrace);
 
@@ -196,7 +228,9 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
         while (Current.Type != TokenType.EndOfFile &&
                Current.Type != TokenType.RParen &&
                precedence < GetPrecedence(Current.Type))
+        {
             leftExpr = ParseInfix(leftExpr);
+        }
 
         return leftExpr;
     }
@@ -222,7 +256,10 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
 
         var expression = ParseExpression();
 
-        if (Current.Type != TokenType.RParen) throw new Exception("Syntax Error: Expected ')' after expression");
+        if (Current.Type != TokenType.RParen)
+        {
+            throw new Exception("Syntax Error: Expected ')' after expression");
+        }
 
         Advance();
 
@@ -277,8 +314,10 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
                     NumberStyles.AllowDecimalPoint,
                     CultureInfo.InvariantCulture,
                     out var decimalValue))
+            {
                 throw new Exception(
                     $"Syntax Error: Invalid decimal literal '{value}'");
+            }
 
             return new LiteralNode<double>(decimalValue);
         }

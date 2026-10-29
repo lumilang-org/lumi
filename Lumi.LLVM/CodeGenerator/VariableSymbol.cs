@@ -1,4 +1,5 @@
 using LLVMSharp.Interop;
+using Lumi.Core.Syntax;
 
 namespace Lumi.LLVM.CodeGenerator;
 
@@ -15,6 +16,6 @@ public sealed class VariableSymbol(
 
     public bool IsUnsignedIntegerType()
     {
-        return TypeName is "u8" or "u16" or "u32" or "u64";
+        return TypeName is TypeConst.U8 or TypeConst.U16 or TypeConst.U32 or TypeConst.U64;
     }
 }

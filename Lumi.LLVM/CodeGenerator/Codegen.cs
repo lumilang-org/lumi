@@ -14,10 +14,10 @@ public sealed class Codegen
     private readonly LlvmTypeHelper _llvmTypeHelper;
     private readonly LLVMModuleRef _module;
     private readonly SemanticModel _semanticModel;
-    private readonly Dictionary<string, VariableSymbol> _variables = new();
 
     // Track the return type of the function currently being generated
     private LLVMTypeRef _currentReturnType;
+    private VariableScope _currentScope;
 
     public Codegen(string moduleName, SemanticModel semanticModel)
     {
@@ -26,6 +26,7 @@ public sealed class Codegen
         _builder = _context.CreateBuilder();
         _semanticModel = semanticModel;
         _llvmTypeHelper = new LlvmTypeHelper(_context, _builder);
+        _currentScope = new VariableScope();
 
         LLVMSharp.Interop.LLVM.InitializeNativeTarget();
         LLVMSharp.Interop.LLVM.InitializeNativeAsmPrinter();
@@ -42,7 +43,7 @@ public sealed class Codegen
         var entryBlock = _context.AppendBasicBlock(function, "entry");
         _builder.PositionAtEnd(entryBlock);
 
-        _variables.Clear();
+        _currentScope.Clear();
 
         GenerateStatements(funcNode.Body);
 
@@ -70,13 +71,9 @@ public sealed class Codegen
         {
             case VariableDeclarationNode varDecl:
             {
-                // 1. Resolve the declared type.
                 var declaredType = ResolveType(varDecl.Type);
-
-                // 2. Generate the initializer.
                 var initializer = GenerateExpression(varDecl.Initializer);
 
-                // 3. Convert it to the declared type before storing.
                 initializer = CastInitializer(
                     initializer,
                     varDecl.Initializer,
@@ -90,11 +87,7 @@ public sealed class Codegen
                     varDecl.Name);
 
                 _builder.BuildStore(initializer, alloca);
-
-                _variables[varDecl.Name] = new VariableSymbol(
-                    varDecl.Type,
-                    declaredType,
-                    alloca);
+                _currentScope.Declare(varDecl.Name, new VariableSymbol(varDecl.Type, declaredType, alloca));
 
                 break;
             }
@@ -154,8 +147,27 @@ public sealed class Codegen
 
                 break;
             case IfStatementNode ifStmt:
+            {
                 GenerateIfStatement(ifStmt);
                 break;
+            }
+
+            case AssignmentStatementNode assignment:
+            {
+                var variable = _currentScope.ResolveVariable(assignment.Name);
+                var value = GenerateExpression(assignment.Value);
+
+                value = CastInitializer(
+                    value,
+                    assignment.Value,
+                    variable.LLVMType,
+                    variable.TypeName,
+                    $"assign_{assignment.Name}");
+
+                _builder.BuildStore(value, variable.Allocation);
+
+                break;
+            }
         }
     }
 
@@ -183,17 +195,24 @@ public sealed class Codegen
             elseBlock = _context.AppendBasicBlock(function, "if.else");
         }
 
-        // Branch from the current condition block.
         _builder.BuildCondBr(
             condition,
             thenBlock,
-            statement.ElseBody is not null
-                ? elseBlock
-                : mergeBlock);
+            statement.ElseBody is not null ? elseBlock : mergeBlock);
 
-        // Generate the then branch.
+        // Generate the then branch in its own lexical scope.
         _builder.PositionAtEnd(thenBlock);
-        GenerateStatements(statement.ThenBody);
+
+        _currentScope = _currentScope.EnterScope();
+
+        try
+        {
+            GenerateStatements(statement.ThenBody);
+        }
+        finally
+        {
+            _currentScope = _currentScope.ExitScope();
+        }
 
         var thenEndBlock = _builder.InsertBlock;
         var thenCanContinue = !HasTerminator(thenEndBlock);
@@ -203,13 +222,23 @@ public sealed class Codegen
             _builder.BuildBr(mergeBlock);
         }
 
-        // Generate the else branch, if present.
+        // Generate the else branch, if present, in its own lexical scope.
         var elseCanContinue = statement.ElseBody is null;
 
         if (statement.ElseBody is not null)
         {
             _builder.PositionAtEnd(elseBlock);
-            GenerateStatements(statement.ElseBody);
+
+            _currentScope = _currentScope.EnterScope();
+
+            try
+            {
+                GenerateStatements(statement.ElseBody);
+            }
+            finally
+            {
+                _currentScope = _currentScope.ExitScope();
+            }
 
             var elseEndBlock = _builder.InsertBlock;
             elseCanContinue = !HasTerminator(elseEndBlock);
@@ -220,15 +249,17 @@ public sealed class Codegen
             }
         }
 
-        // A merge block is reachable if at least one branch reaches it.
-        _builder.PositionAtEnd(mergeBlock);
-
+        // If neither branch can reach the merge block, remove it.
         if (!thenCanContinue && !elseCanContinue)
         {
-            _builder.BuildUnreachable();
-        }
-    }
+            mergeBlock.Delete();
 
+            _builder.PositionAtEnd(thenEndBlock);
+            return;
+        }
+
+        _builder.PositionAtEnd(mergeBlock);
+    }
 
     private static bool HasTerminator(LLVMBasicBlockRef block)
     {
@@ -291,7 +322,8 @@ public sealed class Codegen
     {
         return expression switch
         {
-            LiteralNode<string> num => LLVMValueRef.CreateConstInt(NumberConverterUtils.TranslateIntLiteral(num),
+            LiteralNode<string> num => LLVMValueRef.CreateConstInt(
+                ResolveType(_semanticModel.GetExpressionType(expression)),
                 ulong.Parse(num.Value)),
             LiteralNode<double> floating => LLVMValueRef.CreateConstReal(
                 ResolveType(_semanticModel.GetExpressionType(expression)),
@@ -330,13 +362,12 @@ public sealed class Codegen
 
     private LLVMValueRef LoadVariable(string name)
     {
-        if (_variables.TryGetValue(name, out var variable))
-        {
-            return _builder.BuildLoad2(variable.LLVMType, variable.Allocation, name);
-        }
+        var variable = _currentScope.ResolveVariable(name);
 
-        throw new Exception(
-            $"Compiler Error: Undefined identifier '{name}' reached backend.");
+        return _builder.BuildLoad2(
+            variable.LLVMType,
+            variable.Allocation,
+            name);
     }
 
     private LLVMValueRef GenerateBinary(BinaryExpressionNode binary)
@@ -498,12 +529,11 @@ public sealed class Codegen
         };
     }
 
-    private (LLVMValueRef Left, LLVMValueRef Right, string CommonType)
-        PromoteIntegerOperands(
-            LLVMValueRef left,
-            LLVMValueRef right,
-            string leftType,
-            string rightType)
+    private (LLVMValueRef Left, LLVMValueRef Right, string CommonType) PromoteIntegerOperands(
+        LLVMValueRef left,
+        LLVMValueRef right,
+        string leftType,
+        string rightType)
     {
         var commonType = TypePromoter.GetCommonType(
             leftType,
@@ -701,8 +731,11 @@ public sealed class Codegen
         }
 
         // For variables, preserve their declared signedness.
-        if (expression is IdentifierNode identifier && _variables.TryGetValue(identifier.Name, out var variable))
+
+        if (expression is IdentifierNode identifier)
         {
+            var variable = _currentScope.ResolveVariable(identifier.Name);
+
             return variable.IsUnsignedIntegerType()
                 ? _builder.BuildZExt(value, targetType, name)
                 : _builder.BuildSExt(value, targetType, name);

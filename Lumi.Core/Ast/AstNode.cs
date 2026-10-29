@@ -83,3 +83,12 @@ public sealed class IfStatementNode(
 
     public IReadOnlyList<StatementNode>? ElseBody { get; } = elseBody;
 }
+
+public sealed class AssignmentStatementNode(
+    string name,
+    ExpressionNode value) : StatementNode
+{
+    public string Name { get; } = name;
+
+    public ExpressionNode Value { get; } = value;
+}
