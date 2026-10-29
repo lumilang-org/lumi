@@ -4,14 +4,8 @@ using Lumi.LLVM.CodeGenerator;
 
 const string outputFile = "lumi.o";
 
-var lumiCode = @"
-            func main() -> void {
-                bool isReady = true
-
-                if isReady { i32 variable = 20 println(variable) }
-                else { println(2) }
-            }
-        ";
+var sourceCodePath = Path.Combine(Directory.GetCurrentDirectory(), "main.lumi");
+var lumiCode = File.ReadAllText(sourceCodePath);
 
 Console.WriteLine("--- Initialising Lumi Lexer ---");
 

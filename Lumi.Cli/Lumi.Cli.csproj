@@ -8,8 +8,14 @@
     </PropertyGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\Lumi.Core\Lumi.Core.csproj" />
-      <ProjectReference Include="..\Lumi.LLVM\Lumi.LLVM.csproj" />
+        <ProjectReference Include="..\Lumi.Core\Lumi.Core.csproj"/>
+        <ProjectReference Include="..\Lumi.LLVM\Lumi.LLVM.csproj"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Update="main.lumi">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
     </ItemGroup>
 
 </Project>

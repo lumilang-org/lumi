@@ -13,7 +13,10 @@ public sealed class TypeChecker
         // Create a new local scope for the function body
         var functionScope = new SymbolTable();
 
-        foreach (var statement in func.Body) CheckStatement(statement, functionScope, func.ReturnType);
+        foreach (var statement in func.Body)
+        {
+            CheckStatement(statement, functionScope, func.ReturnType);
+        }
     }
 
     private void CheckStatement(StatementNode statement, SymbolTable scope, string expectedReturnType)
@@ -28,13 +31,17 @@ public sealed class TypeChecker
 
                 if (varDecl.Type.StartsWith('u') &&
                     varDecl.Initializer is UnaryExpressionNode { Operator: "-" })
+                {
                     throw new Exception(
                         $"Type Mismatch: Cannot assign a negative value to unsigned type '{varDecl.Type}'.");
+                }
 
                 if (!CanAssign(varDecl.Type, initializerType, varDecl.Initializer))
+                {
                     throw new Exception(
                         $"Type Mismatch: Cannot assign type '{initializerType}' " +
                         $"to a variable of type '{varDecl.Type}'");
+                }
 
                 scope.Declare(varDecl.Name, varDecl.Type);
                 break;
@@ -46,8 +53,11 @@ public sealed class TypeChecker
                 var actualReturnType = CheckExpression(retStmt.Value, scope);
 
                 if (actualReturnType != expectedReturnType)
+                {
                     throw new Exception(
                         $"Type Mismatch: Function expects to return '{expectedReturnType}' but got '{actualReturnType}' instead.");
+                }
+
                 break;
             case PrintStatementNode printStmt:
                 CheckExpression(printStmt.Expression, scope);
@@ -57,21 +67,27 @@ public sealed class TypeChecker
                 var conditionType = CheckExpression(ifStmt.Condition, scope);
 
                 if (conditionType != TypeConst.Bool)
+                {
                     throw new Exception(
                         $"Type Mismatch: An if condition must be '{TypeConst.Bool}', " +
                         $"but got '{conditionType}'.");
+                }
 
                 var thenScope = new SymbolTable();
 
                 foreach (var branchStatement in ifStmt.ThenBody)
+                {
                     CheckStatement(branchStatement, thenScope, expectedReturnType);
+                }
 
                 if (ifStmt.ElseBody is not null)
                 {
                     var elseScope = new SymbolTable();
 
                     foreach (var branchStatement in ifStmt.ElseBody)
+                    {
                         CheckStatement(branchStatement, elseScope, expectedReturnType);
+                    }
                 }
 
                 break;
@@ -86,7 +102,11 @@ public sealed class TypeChecker
         var type = expression switch
         {
             LiteralNode<string> node =>
-                InferBoundsUtils.InferNumericBounds(node),
+                expectedType is not null
+                && TypePromoter.IsIntegerType(expectedType)
+                && FitsInType(node.Value, expectedType)
+                    ? expectedType
+                    : InferBoundsUtils.InferNumericBounds(node),
 
             LiteralNode<double> node =>
                 expectedType is not null && IsFloatingPointType(expectedType)
@@ -138,72 +158,182 @@ public sealed class TypeChecker
         return type is "i8" or "i16" or "i32" or "i64";
     }
 
+
     private string CheckBinaryExpression(
         BinaryExpressionNode binary,
         SymbolTable scope,
         string? expectedType = null)
     {
         var leftType = CheckExpression(binary.Left, scope, expectedType);
-        var rightType = CheckExpression(binary.Right, scope, expectedType);
 
-        // Arithmetic operators require matching numeric types.
-        if (binary.Operator is TypeConst.Plus
-            or TypeConst.Minus
-            or TypeConst.Star
-            or TypeConst.Slash)
+        var rightExpectedType =
+            binary.Right is LiteralNode<string>
+            && TypePromoter.IsIntegerType(leftType)
+                ? leftType
+                : expectedType;
+
+        var rightType = CheckExpression(
+            binary.Right,
+            scope,
+            rightExpectedType);
+
+        if (IsArithmeticOperator(binary.Operator))
         {
-            if (leftType != rightType)
-                throw new Exception(
-                    $"Type Mismatch: Operator '{binary.Operator}' " +
-                    $"cannot be applied to types '{leftType}' and '{rightType}'.");
-
-            if (!IsIntegerType(leftType) && !IsFloatingPointType(leftType))
-                throw new Exception(
-                    $"Type Mismatch: Operator '{binary.Operator}' " +
-                    $"requires numeric operands, got '{leftType}'.");
-
-            return leftType;
+            return CheckArithmeticExpression(
+                binary,
+                leftType,
+                rightType);
         }
 
-        // Comparison operators produce bool.
-        if (binary.Operator is TypeConst.EqualsEquals
-            or TypeConst.BangEquals
-            or TypeConst.LessThan
-            or TypeConst.LessThanOrEquals
-            or TypeConst.GreaterThan
-            or TypeConst.GreaterThanOrEquals)
+        if (IsComparisonOperator(binary.Operator))
         {
-            if (leftType != rightType)
-                throw new Exception(
-                    $"Type Mismatch: Operator '{binary.Operator}' " +
-                    $"cannot compare types '{leftType}' and '{rightType}'.");
-
-            var isEquality = binary.Operator is "==" or "!=";
-
-            if (!IsIntegerType(leftType)
-                && !IsFloatingPointType(leftType)
-                && leftType != TypeConst.Char
-                && !(leftType == TypeConst.Bool && isEquality))
-                throw new Exception(
-                    $"Type Mismatch: Operator '{binary.Operator}' " +
-                    $"cannot compare values of type '{leftType}'.");
-
-            if (leftType == TypeConst.Bool && !isEquality)
-                throw new Exception(
-                    $"Type Mismatch: Operator '{binary.Operator}' " +
-                    "does not support boolean operands.");
-
-            if (leftType == TypeConst.Char && !isEquality)
-                throw new Exception(
-                    $"Type Mismatch: Operator '{binary.Operator}' " +
-                    "does not support ordering comparisons on characters.");
-
-            return TypeConst.Bool;
+            return CheckComparisonExpression(
+                binary,
+                leftType,
+                rightType);
         }
 
         throw new Exception(
             $"Unsupported binary operator: '{binary.Operator}'.");
     }
+
+    private string CheckArithmeticExpression(
+        BinaryExpressionNode binary,
+        string leftType,
+        string rightType)
+    {
+        if (!IsNumericType(leftType) || !IsNumericType(rightType))
+        {
+            throw new Exception(
+                $"Type Mismatch: Operator '{binary.Operator}' " +
+                $"requires numeric operands, got '{leftType}' and '{rightType}'.");
+        }
+
+        // Floating-point promotion is not handled by TypePromoter yet.
+        if (IsFloatingPointType(leftType) || IsFloatingPointType(rightType))
+        {
+            if (leftType != rightType)
+            {
+                throw new Exception(
+                    $"Type Mismatch: Operator '{binary.Operator}' " +
+                    $"cannot be applied to types '{leftType}' and '{rightType}'.");
+            }
+
+            return leftType;
+        }
+
+        var commonType = TypePromoter.GetCommonType(leftType, rightType);
+
+        if (commonType is null)
+        {
+            throw new Exception(
+                $"Type Mismatch: Operator '{binary.Operator}' " +
+                $"cannot be applied to types '{leftType}' and '{rightType}'.");
+        }
+
+        return commonType;
+    }
+
+    private string CheckComparisonExpression(
+        BinaryExpressionNode binary,
+        string leftType,
+        string rightType)
+    {
+        var isEquality = binary.Operator is
+            TypeConst.EqualsEquals or TypeConst.BangEquals;
+
+        // Integer operands may have different widths if they can be promoted.
+        if (TypePromoter.IsIntegerType(leftType) &&
+            TypePromoter.IsIntegerType(rightType))
+        {
+            EnsureCompatibleNumericTypes(binary, leftType, rightType);
+            return TypeConst.Bool;
+        }
+
+        // Floating-point comparisons currently require identical types.
+        if (IsFloatingPointType(leftType) &&
+            IsFloatingPointType(rightType))
+        {
+            if (leftType != rightType)
+            {
+                throw CreateComparisonTypeMismatch(binary, leftType, rightType);
+            }
+
+            return TypeConst.Bool;
+        }
+
+        if (leftType != rightType)
+        {
+            throw CreateComparisonTypeMismatch(binary, leftType, rightType);
+        }
+
+        if (leftType == TypeConst.Bool && isEquality)
+        {
+            return TypeConst.Bool;
+        }
+
+        if (leftType == TypeConst.Char && isEquality)
+        {
+            return TypeConst.Bool;
+        }
+
+        if (leftType == TypeConst.Char || leftType == TypeConst.Bool)
+        {
+            throw new Exception(
+                $"Type Mismatch: Operator '{binary.Operator}' " +
+                $"does not support ordering comparisons on '{leftType}'.");
+        }
+
+        throw new Exception(
+            $"Type Mismatch: Operator '{binary.Operator}' " +
+            $"cannot compare values of type '{leftType}'.");
+    }
+
+    private void EnsureCompatibleNumericTypes(
+        BinaryExpressionNode binary,
+        string leftType,
+        string rightType)
+    {
+        if (TypePromoter.GetCommonType(leftType, rightType) is null)
+        {
+            throw CreateComparisonTypeMismatch(binary, leftType, rightType);
+        }
+    }
+
+    private static Exception CreateComparisonTypeMismatch(
+        BinaryExpressionNode binary,
+        string leftType,
+        string rightType)
+    {
+        return new Exception(
+            $"Type Mismatch: Operator '{binary.Operator}' " +
+            $"cannot compare types '{leftType}' and '{rightType}'.");
+    }
+
+    private static bool IsArithmeticOperator(string op)
+    {
+        return op is TypeConst.Plus
+            or TypeConst.Minus
+            or TypeConst.Star
+            or TypeConst.Slash;
+    }
+
+    private static bool IsComparisonOperator(string op)
+    {
+        return op is TypeConst.EqualsEquals
+            or TypeConst.BangEquals
+            or TypeConst.LessThan
+            or TypeConst.LessThanOrEquals
+            or TypeConst.GreaterThan
+            or TypeConst.GreaterThanOrEquals;
+    }
+
+    private bool IsNumericType(string type)
+    {
+        return TypePromoter.IsIntegerType(type)
+               || IsFloatingPointType(type);
+    }
+
 
     private static bool CanAssign(
         string targetType,
@@ -211,14 +341,19 @@ public sealed class TypeChecker
         ExpressionNode expression)
     {
         if (targetType == sourceType)
+        {
             return true;
+        }
 
         if (expression is LiteralNode<string> integerLiteral
-            && IsIntegerType(targetType))
+            && TypePromoter.IsIntegerType(targetType))
+        {
             return FitsInType(integerLiteral.Value, targetType);
+        }
 
         if (expression is LiteralNode<double> floatingLiteral
             && IsFloatingPointType(targetType))
+        {
             return double.IsFinite(floatingLiteral.Value)
                    && targetType switch
                    {
@@ -232,10 +367,13 @@ public sealed class TypeChecker
 
                        _ => false
                    };
+        }
 
         if (targetType == TypeConst.Char
             && expression is LiteralNode<char>)
+        {
             return true;
+        }
 
         if (expression is UnaryExpressionNode
             {
@@ -243,17 +381,13 @@ public sealed class TypeChecker
                 Operand: LiteralNode<string> integerOperand
             }
             && IsSignedIntegerType(targetType))
+        {
             return NegativeLiteralFitsInType(
                 integerOperand.Value,
                 targetType);
+        }
 
         return false;
-    }
-
-    private static bool IsIntegerType(string type)
-    {
-        return type is TypeConst.I16 or TypeConst.I32 or TypeConst.I64
-            or TypeConst.U16 or TypeConst.U32 or TypeConst.U64;
     }
 
     private static bool IsFloatingPointType(string type)
@@ -268,7 +402,9 @@ public sealed class TypeChecker
                 NumberStyles.None,
                 CultureInfo.InvariantCulture,
                 out var unsignedValue))
+        {
             return false;
+        }
 
         return type switch
         {
@@ -293,7 +429,9 @@ public sealed class TypeChecker
                 NumberStyles.None,
                 CultureInfo.InvariantCulture,
                 out var magnitude))
+        {
             return false;
+        }
 
         return type switch
         {

@@ -2,6 +2,7 @@ using LLVMSharp.Interop;
 using Lumi.Core.Ast;
 using Lumi.Core.Semantics;
 using Lumi.Core.Syntax;
+using Lumi.LLVM.Helpers;
 using Lumi.LLVM.Utils;
 
 namespace Lumi.LLVM.CodeGenerator;
@@ -10,6 +11,7 @@ public sealed class Codegen
 {
     private readonly LLVMBuilderRef _builder;
     private readonly LLVMContextRef _context;
+    private readonly LlvmTypeHelper _llvmTypeHelper;
     private readonly LLVMModuleRef _module;
     private readonly SemanticModel _semanticModel;
     private readonly Dictionary<string, VariableSymbol> _variables = new();
@@ -23,6 +25,7 @@ public sealed class Codegen
         _module = _context.CreateModuleWithName(moduleName);
         _builder = _context.CreateBuilder();
         _semanticModel = semanticModel;
+        _llvmTypeHelper = new LlvmTypeHelper(_context, _builder);
 
         LLVMSharp.Interop.LLVM.InitializeNativeTarget();
         LLVMSharp.Interop.LLVM.InitializeNativeAsmPrinter();
@@ -31,8 +34,6 @@ public sealed class Codegen
 
     public void GenerateFunction(FunctionDeclarationNode funcNode)
     {
-        Console.WriteLine("[DEBUG] GenerateFunction UPDATED VERSION");
-
         _currentReturnType = ResolveType(funcNode.ReturnType);
 
         var functionType = LLVMTypeRef.CreateFunction(_currentReturnType, []);
@@ -353,26 +354,19 @@ public sealed class Codegen
         var leftType = _semanticModel.GetExpressionType(binary.Left);
         var rightType = _semanticModel.GetExpressionType(binary.Right);
 
-        // Floating-point operations and comparisons.
-        if (left.TypeOf.Kind is
-            LLVMTypeKind.LLVMHalfTypeKind
-            or LLVMTypeKind.LLVMFloatTypeKind
-            or LLVMTypeKind.LLVMDoubleTypeKind)
+        if (IsFloatingPoint(left.TypeOf.Kind)
+            || IsFloatingPoint(right.TypeOf.Kind))
         {
-            if (left.TypeOf != right.TypeOf)
+            if (!IsFloatingPoint(left.TypeOf.Kind)
+                || !IsFloatingPoint(right.TypeOf.Kind)
+                || left.TypeOf != right.TypeOf)
             {
-                throw new InvalidOperationException(
-                    $"Codegen received incompatible floating-point operand types: " +
-                    $"'{leftType}' and '{rightType}'.");
+                throw CreateIncompatibleOperandsException(
+                    leftType,
+                    rightType);
             }
 
-            if (binary.Operator is
-                TypeConst.EqualsEquals
-                or TypeConst.BangEquals
-                or TypeConst.LessThan
-                or TypeConst.LessThanOrEquals
-                or TypeConst.GreaterThan
-                or TypeConst.GreaterThanOrEquals)
+            if (IsComparisonOperator(binary.Operator))
             {
                 var predicate = binary.Operator switch
                 {
@@ -405,13 +399,6 @@ public sealed class Codegen
                     "fcmp");
             }
 
-            if (leftType != rightType)
-            {
-                throw new InvalidOperationException(
-                    $"Codegen received incompatible operand types: " +
-                    $"'{leftType}' and '{rightType}'.");
-            }
-
             return binary.Operator switch
             {
                 TypeConst.Plus =>
@@ -431,7 +418,6 @@ public sealed class Codegen
             };
         }
 
-        // Integer-only operations and comparisons.
         if (left.TypeOf.Kind != LLVMTypeKind.LLVMIntegerTypeKind
             || right.TypeOf.Kind != LLVMTypeKind.LLVMIntegerTypeKind)
         {
@@ -439,22 +425,19 @@ public sealed class Codegen
                 $"Binary operator '{binary.Operator}' requires numeric operands.");
         }
 
-        // Comparisons produce an LLVM i1 value, representing Lumi's bool.
-        if (binary.Operator is
-            TypeConst.EqualsEquals
-            or TypeConst.BangEquals
-            or TypeConst.LessThan
-            or TypeConst.LessThanOrEquals
-            or TypeConst.GreaterThan
-            or TypeConst.GreaterThanOrEquals)
-        {
-            if (leftType != rightType)
-            {
-                throw new InvalidOperationException(
-                    $"Codegen received incompatible operand types: " +
-                    $"'{leftType}' and '{rightType}'.");
-            }
+        var promoted = PromoteIntegerOperands(
+            left,
+            right,
+            leftType,
+            rightType);
 
+        left = promoted.Left;
+        right = promoted.Right;
+
+        var commonType = promoted.CommonType;
+
+        if (IsComparisonOperator(binary.Operator))
+        {
             var predicate = binary.Operator switch
             {
                 TypeConst.EqualsEquals =>
@@ -463,24 +446,28 @@ public sealed class Codegen
                 TypeConst.BangEquals =>
                     LLVMIntPredicate.LLVMIntNE,
 
-                TypeConst.LessThan => IsUnsignedType(leftType)
-                    ? LLVMIntPredicate.LLVMIntULT
-                    : LLVMIntPredicate.LLVMIntSLT,
+                TypeConst.LessThan =>
+                    IsUnsignedType(commonType)
+                        ? LLVMIntPredicate.LLVMIntULT
+                        : LLVMIntPredicate.LLVMIntSLT,
 
-                TypeConst.LessThanOrEquals => IsUnsignedType(leftType)
-                    ? LLVMIntPredicate.LLVMIntULE
-                    : LLVMIntPredicate.LLVMIntSLE,
+                TypeConst.LessThanOrEquals =>
+                    IsUnsignedType(commonType)
+                        ? LLVMIntPredicate.LLVMIntULE
+                        : LLVMIntPredicate.LLVMIntSLE,
 
-                TypeConst.GreaterThan => IsUnsignedType(leftType)
-                    ? LLVMIntPredicate.LLVMIntUGT
-                    : LLVMIntPredicate.LLVMIntSGT,
+                TypeConst.GreaterThan =>
+                    IsUnsignedType(commonType)
+                        ? LLVMIntPredicate.LLVMIntUGT
+                        : LLVMIntPredicate.LLVMIntSGT,
 
-                TypeConst.GreaterThanOrEquals => IsUnsignedType(leftType)
-                    ? LLVMIntPredicate.LLVMIntUGE
-                    : LLVMIntPredicate.LLVMIntSGE,
+                TypeConst.GreaterThanOrEquals =>
+                    IsUnsignedType(commonType)
+                        ? LLVMIntPredicate.LLVMIntUGE
+                        : LLVMIntPredicate.LLVMIntSGE,
 
                 _ => throw new NotSupportedException(
-                    $"Unsupported comparison operator: {binary.Operator}")
+                    $"Unsupported integer comparison: {binary.Operator}")
             };
 
             return _builder.BuildICmp(
@@ -489,32 +476,6 @@ public sealed class Codegen
                 right,
                 "cmptmp");
         }
-
-        // Integer arithmetic requires matching semantic types.
-        if (leftType != rightType)
-        {
-            throw new InvalidOperationException(
-                $"Codegen received incompatible operand types: " +
-                $"'{leftType}' and '{rightType}'.");
-        }
-
-        var commonWidth = Math.Max(
-            left.TypeOf.IntWidth,
-            right.TypeOf.IntWidth);
-
-        var commonType = commonWidth switch
-        {
-            8 => _context.Int8Type,
-            16 => _context.Int16Type,
-            32 => _context.Int32Type,
-            64 => _context.Int64Type,
-
-            _ => throw new NotSupportedException(
-                $"Unsupported arithmetic integer width: {commonWidth}.")
-        };
-
-        left = CastInteger(left, commonType, "left_operand_cast");
-        right = CastInteger(right, commonType, "right_operand_cast");
 
         return binary.Operator switch
         {
@@ -527,31 +488,87 @@ public sealed class Codegen
             TypeConst.Star =>
                 _builder.BuildMul(left, right, "multmp"),
 
-            TypeConst.Slash => IsUnsignedType(leftType)
-                ? _builder.BuildUDiv(left, right, "divtmp")
-                : _builder.BuildSDiv(left, right, "divtmp"),
+            TypeConst.Slash =>
+                IsUnsignedType(commonType)
+                    ? _builder.BuildUDiv(left, right, "divtmp")
+                    : _builder.BuildSDiv(left, right, "divtmp"),
 
             _ => throw new NotSupportedException(
-                $"Unsupported IR binary operator: {binary.Operator}")
+                $"Unsupported integer operator: {binary.Operator}")
         };
+    }
+
+    private (LLVMValueRef Left, LLVMValueRef Right, string CommonType)
+        PromoteIntegerOperands(
+            LLVMValueRef left,
+            LLVMValueRef right,
+            string leftType,
+            string rightType)
+    {
+        var commonType = TypePromoter.GetCommonType(
+            leftType,
+            rightType);
+
+        if (commonType is null)
+        {
+            throw CreateIncompatibleOperandsException(
+                leftType,
+                rightType);
+        }
+
+        left = _llvmTypeHelper.ConvertInteger(
+            left,
+            leftType,
+            commonType);
+
+        right = _llvmTypeHelper.ConvertInteger(
+            right,
+            rightType,
+            commonType);
+
+        return (left, right, commonType);
+    }
+
+    private static bool IsFloatingPoint(LLVMTypeKind kind)
+    {
+        return kind is LLVMTypeKind.LLVMHalfTypeKind
+            or LLVMTypeKind.LLVMFloatTypeKind
+            or LLVMTypeKind.LLVMDoubleTypeKind;
+    }
+
+    private static bool IsComparisonOperator(string op)
+    {
+        return op is TypeConst.EqualsEquals
+            or TypeConst.BangEquals
+            or TypeConst.LessThan
+            or TypeConst.LessThanOrEquals
+            or TypeConst.GreaterThan
+            or TypeConst.GreaterThanOrEquals;
     }
 
     private static bool IsUnsignedType(string type)
     {
-        return type.StartsWith(
-            "u",
-            StringComparison.Ordinal);
+        return type.StartsWith('u');
     }
 
+    private static InvalidOperationException CreateIncompatibleOperandsException(
+        string leftType,
+        string rightType)
+    {
+        return new InvalidOperationException(
+            $"Codegen received incompatible operand types: " +
+            $"'{leftType}' and '{rightType}'.");
+    }
 
     private LLVMTypeRef ResolveType(string typeName)
     {
         return typeName switch
         {
             TypeConst.I8 or TypeConst.U8 => _context.Int8Type,
-            TypeConst.U16 => _context.Int16Type,
+            TypeConst.I16 or TypeConst.U16 => _context.Int16Type,
             TypeConst.I32 or TypeConst.U32 => _context.Int32Type,
             TypeConst.I64 or TypeConst.U64 => _context.Int64Type,
+
             TypeConst.Char => _context.Int8Type,
             TypeConst.Void => _context.VoidType,
             TypeConst.Bool => _context.Int1Type,
@@ -560,7 +577,7 @@ public sealed class Codegen
             TypeConst.F32 => _context.FloatType,
             TypeConst.F64 => _context.DoubleType,
 
-            _ => throw new Exception(
+            _ => throw new NotSupportedException(
                 $"Unsupported backend data primitive type: {typeName}")
         };
     }
