@@ -12,7 +12,7 @@ Console.WriteLine("--- Initialising Lumi Lexer ---");
 var lexer = new Lexer(lumiCode);
 
 Token token;
-List<Token> tokens = new();
+List<Token> tokens = [];
 
 do
 {

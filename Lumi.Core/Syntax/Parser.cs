@@ -51,6 +51,16 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
 
             TokenType.LogicalAnd => Precedence.LogicalAnd,
 
+            TokenType.BitwiseOr => Precedence.BitwiseOr,
+
+            TokenType.BitwiseXor => Precedence.BitwiseXor,
+
+            TokenType.BitwiseAnd => Precedence.BitwiseAnd,
+
+            TokenType.LeftShift => Precedence.Shift,
+
+            TokenType.RightShift => Precedence.Shift,
+
             TokenType.EqualEqual
                 or TokenType.BangEqual
                 or TokenType.LessThan
@@ -138,6 +148,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
             }
             case TokenType.KeywordIf:
                 return ParseIfStatement();
+            case TokenType.KeywordWhile:
+                return ParseWhileStatement();
             case TokenType.PrintFunc:
             {
                 var functionName = Current.Value;
@@ -176,6 +188,16 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
                 return new ExpressionStatementNode(expr);
             }
         }
+    }
+
+    private WhileStatementNode ParseWhileStatement()
+    {
+        Consume(TokenType.KeywordWhile);
+
+        var condition = ParseExpression();
+        var body = ParseBlock();
+
+        return new WhileStatementNode(condition, body);
     }
 
     private IfStatementNode ParseIfStatement()
@@ -250,6 +272,9 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
             TokenType.BooleanLiteral => ParseBooleanLiteral(),
             TokenType.LParen => ParseGroupedExpression(),
             TokenType.LogicalNot or
+                TokenType.BitwiseNot or
+                TokenType.LeftShift or
+                TokenType.RightShift or
                 TokenType.Minus => ParseUnaryExpression(),
             _ => throw new Exception($"Syntax Error: Unexpected prefix token {Current.Type}")
         };

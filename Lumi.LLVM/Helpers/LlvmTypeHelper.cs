@@ -1,4 +1,5 @@
 using LLVMSharp.Interop;
+using Lumi.Core.Semantics;
 using Lumi.Core.Syntax;
 
 namespace Lumi.LLVM.Helpers;
@@ -20,11 +21,6 @@ public sealed class LlvmTypeHelper(
 
             _ => throw new ArgumentOutOfRangeException(nameof(typeName))
         };
-    }
-
-    public static bool IsUnsignedInteger(string typeName)
-    {
-        return typeName.StartsWith('u');
     }
 
     private static int GetIntegerWidth(string typeName)
@@ -65,7 +61,7 @@ public sealed class LlvmTypeHelper(
                 "int.trunc");
         }
 
-        return IsUnsignedInteger(sourceType)
+        return TypeChecker.IsUnsignedInteger(sourceType)
             ? builder.BuildZExt(
                 value,
                 targetLlvmType,

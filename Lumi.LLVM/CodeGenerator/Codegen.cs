@@ -146,9 +146,16 @@ public sealed class Codegen
                 }
 
                 break;
+
             case IfStatementNode ifStmt:
             {
                 GenerateIfStatement(ifStmt);
+                break;
+            }
+
+            case WhileStatementNode whileStmt:
+            {
+                GenerateWhileStatement(whileStmt);
                 break;
             }
 
@@ -169,6 +176,42 @@ public sealed class Codegen
                 break;
             }
         }
+    }
+
+    private void GenerateWhileStatement(WhileStatementNode whileStmt)
+    {
+        var function = _builder.InsertBlock.Parent;
+
+        var conditionBlock = _context.AppendBasicBlock(function, "while.condition");
+        var bodyBlock = _context.AppendBasicBlock(function, "while.body");
+        var exitBlock = _context.AppendBasicBlock(function, "while.exit");
+
+        // Enter the loop by evaluating its condition.
+        _builder.BuildBr(conditionBlock);
+
+        // Condition: branch to the body or exit.
+        _builder.PositionAtEnd(conditionBlock);
+
+        var condition = GenerateExpression(whileStmt.Condition);
+
+        _builder.BuildCondBr(condition, bodyBlock, exitBlock);
+
+        // Body: execute statements, then return to the condition.
+        _builder.PositionAtEnd(bodyBlock);
+
+        foreach (var statement in whileStmt.Body)
+        {
+            GenerateStatement(statement);
+        }
+
+        // A return statement may already have terminated this block.
+        if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+        {
+            _builder.BuildBr(conditionBlock);
+        }
+
+        // Continue generating subsequent statements after the loop.
+        _builder.PositionAtEnd(exitBlock);
     }
 
 
@@ -352,9 +395,11 @@ public sealed class Codegen
                     or LLVMTypeKind.LLVMDoubleTypeKind =>
                 _builder.BuildFNeg(operand, "fnegtmp"),
 
-            "!" => _builder.BuildNot(
-                operand,
-                "logical.not"),
+            "!" when operand.TypeOf.Kind == LLVMTypeKind.LLVMIntegerTypeKind =>
+                _builder.BuildNot(operand, "logical.not"),
+
+            "~" when operand.TypeOf.Kind == LLVMTypeKind.LLVMIntegerTypeKind =>
+                _builder.BuildNot(operand, "bitwise.not"),
 
             "-" => throw new NotSupportedException(
                 "Unary '-' requires a numeric operand."),
@@ -384,6 +429,11 @@ public sealed class Codegen
         var left = GenerateExpression(binary.Left);
         var right = GenerateExpression(binary.Right);
 
+        if (TypeChecker.IsShiftOperator(binary.Operator))
+        {
+            return GenerateShift(binary, left, right);
+        }
+
         if (left.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind
             || right.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
         {
@@ -393,6 +443,30 @@ public sealed class Codegen
 
         var leftType = _semanticModel.GetExpressionType(binary.Left);
         var rightType = _semanticModel.GetExpressionType(binary.Right);
+
+        if (leftType == TypeConst.Bool && rightType == TypeConst.Bool)
+        {
+            if (binary.Operator is TypeConst.EqualsEquals or TypeConst.BangEquals)
+            {
+                var predicate = binary.Operator switch
+                {
+                    TypeConst.EqualsEquals => LLVMIntPredicate.LLVMIntEQ,
+                    TypeConst.BangEquals => LLVMIntPredicate.LLVMIntNE,
+
+                    _ => throw new NotSupportedException(
+                        $"Unsupported boolean operator: {binary.Operator}")
+                };
+
+                return _builder.BuildICmp(
+                    predicate,
+                    left,
+                    right,
+                    "bool.cmptmp");
+            }
+
+            throw new NotSupportedException(
+                $"Operator '{binary.Operator}' is not supported for boolean operands.");
+        }
 
         if (IsFloatingPoint(left.TypeOf.Kind)
             || IsFloatingPoint(right.TypeOf.Kind))
@@ -487,22 +561,22 @@ public sealed class Codegen
                     LLVMIntPredicate.LLVMIntNE,
 
                 TypeConst.LessThan =>
-                    IsUnsignedType(commonType)
+                    TypeChecker.IsUnsignedInteger(commonType)
                         ? LLVMIntPredicate.LLVMIntULT
                         : LLVMIntPredicate.LLVMIntSLT,
 
                 TypeConst.LessThanOrEquals =>
-                    IsUnsignedType(commonType)
+                    TypeChecker.IsUnsignedInteger(commonType)
                         ? LLVMIntPredicate.LLVMIntULE
                         : LLVMIntPredicate.LLVMIntSLE,
 
                 TypeConst.GreaterThan =>
-                    IsUnsignedType(commonType)
+                    TypeChecker.IsUnsignedInteger(commonType)
                         ? LLVMIntPredicate.LLVMIntUGT
                         : LLVMIntPredicate.LLVMIntSGT,
 
                 TypeConst.GreaterThanOrEquals =>
-                    IsUnsignedType(commonType)
+                    TypeChecker.IsUnsignedInteger(commonType)
                         ? LLVMIntPredicate.LLVMIntUGE
                         : LLVMIntPredicate.LLVMIntSGE,
 
@@ -528,14 +602,31 @@ public sealed class Codegen
             TypeConst.Star =>
                 _builder.BuildMul(left, right, "multmp"),
 
+            // Bitwise operators
+            TypeConst.Ampersand => _builder.BuildAnd(left, right, "bitwise.and"),
+            TypeConst.Pipe => _builder.BuildOr(left, right, "bitwise.or"),
+            TypeConst.Caret => _builder.BuildXor(left, right, "bitwise.xor"),
+
+            TypeConst.ShiftLeft => _builder.BuildShl(left, right, "shift.left"),
+            TypeConst.ShiftRight when IsUnsignedIntegerType(binary.Left) =>
+                _builder.BuildLShr(left, right, "shift.right"),
+
+            TypeConst.ShiftRight => _builder.BuildAShr(left, right, "shift.right"),
+
             TypeConst.Slash =>
-                IsUnsignedType(commonType)
+                TypeChecker.IsUnsignedInteger(commonType)
                     ? _builder.BuildUDiv(left, right, "divtmp")
                     : _builder.BuildSDiv(left, right, "divtmp"),
 
             _ => throw new NotSupportedException(
                 $"Unsupported integer operator: {binary.Operator}")
         };
+    }
+
+    private bool IsUnsignedIntegerType(ExpressionNode expression)
+    {
+        var type = _semanticModel.GetExpressionType(expression);
+        return TypeChecker.IsUnsignedInteger(type);
     }
 
     private LLVMValueRef GenerateLogicalBinary(BinaryExpressionNode binary)
@@ -635,11 +726,6 @@ public sealed class Codegen
             or TypeConst.LessThanOrEquals
             or TypeConst.GreaterThan
             or TypeConst.GreaterThanOrEquals;
-    }
-
-    private static bool IsUnsignedType(string type)
-    {
-        return type.StartsWith('u');
     }
 
     private static InvalidOperationException CreateIncompatibleOperandsException(
@@ -804,5 +890,83 @@ public sealed class Codegen
 
         // Fallback for integer expressions.
         return _builder.BuildSExt(value, targetType, name);
+    }
+
+    private LLVMValueRef GenerateShift(
+        BinaryExpressionNode binary,
+        LLVMValueRef left,
+        LLVMValueRef right)
+    {
+        var leftType = _semanticModel.GetExpressionType(binary.Left);
+        var rightType = _semanticModel.GetExpressionType(binary.Right);
+
+        var bitWidth = left.TypeOf.IntWidth;
+        var isUnsignedShiftAmount =
+            TypeChecker.IsUnsignedInteger(rightType);
+
+        var function = _builder.InsertBlock.Parent;
+
+        var validBlock = _context.AppendBasicBlock(function, "shift.valid");
+        var invalidBlock = _context.AppendBasicBlock(function, "shift.invalid");
+
+        // Reject negative shift amounts for signed integers.
+        LLVMValueRef isValid;
+
+        if (isUnsignedShiftAmount)
+        {
+            isValid = _builder.BuildICmp(
+                LLVMIntPredicate.LLVMIntULT,
+                right,
+                LLVMValueRef.CreateConstInt(right.TypeOf, bitWidth),
+                "shift.amount.valid");
+        }
+        else
+        {
+            var isNonNegative = _builder.BuildICmp(
+                LLVMIntPredicate.LLVMIntSGE,
+                right,
+                LLVMValueRef.CreateConstInt(right.TypeOf, 0),
+                "shift.amount.nonnegative");
+
+            var isBelowWidth = _builder.BuildICmp(
+                LLVMIntPredicate.LLVMIntULT,
+                right,
+                LLVMValueRef.CreateConstInt(right.TypeOf, bitWidth),
+                "shift.amount.below.width");
+
+            isValid = _builder.BuildAnd(
+                isNonNegative,
+                isBelowWidth,
+                "shift.amount.valid");
+        }
+
+        _builder.BuildCondBr(isValid, validBlock, invalidBlock);
+
+        // Invalid shifts terminate the program.
+        _builder.PositionAtEnd(invalidBlock);
+        _builder.BuildCall2(
+            LLVMTypeRef.CreateFunction(_context.VoidType, []),
+            _module.AddFunction("abort", LLVMTypeRef.CreateFunction(_context.VoidType, [])),
+            []);
+
+        _builder.BuildUnreachable();
+
+        // Generate the actual shift only on the valid path.
+        _builder.PositionAtEnd(validBlock);
+
+        return binary.Operator switch
+        {
+            TypeConst.ShiftLeft =>
+                _builder.BuildShl(left, right, "shift.left"),
+
+            TypeConst.ShiftRight when IsUnsignedIntegerType(binary.Left) =>
+                _builder.BuildLShr(left, right, "shift.right"),
+
+            TypeConst.ShiftRight =>
+                _builder.BuildAShr(left, right, "shift.right"),
+
+            _ => throw new NotSupportedException(
+                $"Unsupported shift operator: '{binary.Operator}'.")
+        };
     }
 }

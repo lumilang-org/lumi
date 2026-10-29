@@ -33,4 +33,10 @@ public static class TypeConst
     public const string Else = "else";
     public const string LogicalAnd = "&&";
     public const string LogicalOr = "||";
+    public const string Ampersand = "&";
+    public const string Pipe = "|";
+    public const string Caret = "^";
+    public const string ShiftLeft = "<<";
+    public const string ShiftRight = ">>";
+    public const string While = "while";
 }

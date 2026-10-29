@@ -14,6 +14,8 @@ public abstract class StatementNode : ASTNode
 {
 }
 
+public sealed class BreakStatementNode : StatementNode;
+
 public sealed class UnaryExpressionNode(
     string @operator,
     ExpressionNode operand) : ExpressionNode
@@ -91,4 +93,14 @@ public sealed class AssignmentStatementNode(
     public string Name { get; } = name;
 
     public ExpressionNode Value { get; } = value;
+}
+
+public sealed class WhileStatementNode(
+    ExpressionNode condition,
+    IReadOnlyList<StatementNode> body)
+    : StatementNode
+{
+    public ExpressionNode Condition { get; } = condition;
+
+    public IReadOnlyList<StatementNode> Body { get; } = body;
 }

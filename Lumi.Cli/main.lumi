@@ -1,5 +1,8 @@
 func main() -> void {
-    println(true || false && false)
-    println(false || true && false)
-    println(true && true)
+    i32 i = 0
+
+    while i < 5 {
+        println(i)
+        i = i + 1
+    }
 }

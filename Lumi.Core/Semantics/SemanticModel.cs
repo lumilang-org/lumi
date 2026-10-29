@@ -13,7 +13,10 @@ public sealed class SemanticModel
 
     public string GetExpressionType(ExpressionNode expression)
     {
-        if (_expressionTypes.TryGetValue(expression, out var type)) return type;
+        if (_expressionTypes.TryGetValue(expression, out var type))
+        {
+            return type;
+        }
 
         throw new Exception(
             $"Semantic Error: No resolved type exists for expression '{expression.GetType().Name}'.");

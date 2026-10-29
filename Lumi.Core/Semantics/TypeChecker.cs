@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Numerics;
 using Lumi.Core.Ast;
 using Lumi.Core.Syntax;
 
@@ -99,6 +100,25 @@ public sealed class TypeChecker
 
                 break;
             }
+            case WhileStatementNode whileStatement:
+            {
+                var conditionType = CheckExpression(whileStatement.Condition, scope);
+
+                if (conditionType != TypeConst.Bool)
+                {
+                    throw new Exception(
+                        $"Type Mismatch: A while condition must be 'bool', but got '{conditionType}'.");
+                }
+
+                var bodyScope = new SymbolTable(scope);
+
+                foreach (var stmt in whileStatement.Body)
+                {
+                    CheckStatement(stmt, bodyScope, expectedReturnType);
+                }
+
+                break;
+            }
             case AssignmentStatementNode assignment:
             {
                 var variableType = scope.Lookup(assignment.Name);
@@ -163,17 +183,22 @@ public sealed class TypeChecker
 
         return unary.Operator switch
         {
-            "-" when IsSignedIntegerType(operandType)
-                     || IsFloatingPointType(operandType)
+            TypeConst.Minus when IsSignedIntegerType(operandType)
+                                 || IsFloatingPointType(operandType)
                 => operandType,
 
-            "-" => throw new Exception(
+            TypeConst.Minus => throw new Exception(
                 $"Type Mismatch: Unary '-' cannot be applied to type '{operandType}'."),
 
             "!" when operandType == TypeConst.Bool => TypeConst.Bool,
 
             "!" => throw new Exception(
                 $"Type Error: Logical NOT requires 'bool', but got '{operandType}'."),
+
+            "~" when TypePromoter.IsIntegerType(operandType) => operandType,
+
+            "~" => throw new Exception(
+                $"Type Error: Bitwise NOT requires an integer operand, but got '{operandType}'."),
 
             _ => throw new Exception(
                 $"Unsupported unary operator: '{unary.Operator}'.")
@@ -184,7 +209,6 @@ public sealed class TypeChecker
     {
         return type is "i8" or "i16" or "i32" or "i64";
     }
-
 
     private string CheckBinaryExpression(
         BinaryExpressionNode binary,
@@ -212,6 +236,61 @@ public sealed class TypeChecker
                 rightType);
         }
 
+        if (IsBitwiseOperator(binary.Operator))
+        {
+            if (!TypePromoter.IsIntegerType(leftType)
+                || !TypePromoter.IsIntegerType(rightType))
+            {
+                throw new Exception(
+                    $"Type Mismatch: Operator '{binary.Operator}' " +
+                    $"requires integer operands, got '{leftType}' and '{rightType}'.");
+            }
+
+            var commonType = TypePromoter.GetCommonType(leftType, rightType);
+
+            if (commonType is null)
+            {
+                throw new Exception(
+                    $"Type Mismatch: Operator '{binary.Operator}' " +
+                    $"cannot be applied to types '{leftType}' and '{rightType}'.");
+            }
+
+            return commonType;
+        }
+
+        if (IsShiftOperator(binary.Operator))
+        {
+            if (!TypePromoter.IsIntegerType(leftType)
+                || !TypePromoter.IsIntegerType(rightType))
+            {
+                throw new Exception(
+                    $"Type Mismatch: Operator '{binary.Operator}' " +
+                    $"requires integer operands, got '{leftType}' and '{rightType}'.");
+            }
+
+            if (TryGetIntegerConstant(binary.Right, out var shiftAmount))
+            {
+                if (shiftAmount < BigInteger.Zero)
+                {
+                    throw new Exception(
+                        $"Invalid shift amount: '{shiftAmount}'. " +
+                        "Shift amounts cannot be negative.");
+                }
+
+                var bitWidth = GetIntegerBitWidth(leftType);
+
+                if (shiftAmount >= bitWidth)
+                {
+                    throw new Exception(
+                        $"Invalid shift amount: '{shiftAmount}'. " +
+                        $"Type '{leftType}' has a bit width of {bitWidth}, " +
+                        $"so the shift amount must be between 0 and {bitWidth - 1}.");
+                }
+            }
+
+            return leftType;
+        }
+
         if (IsComparisonOperator(binary.Operator))
         {
             return CheckComparisonExpression(
@@ -234,6 +313,65 @@ public sealed class TypeChecker
 
         throw new Exception(
             $"Unsupported binary operator: '{binary.Operator}'.");
+    }
+
+    public static bool IsShiftOperator(string op)
+    {
+        return op is TypeConst.ShiftRight or TypeConst.ShiftLeft;
+    }
+
+    private static bool IsBitwiseOperator(string op)
+    {
+        return op is "&" or "|" or "^";
+    }
+
+    private static bool TryGetIntegerConstant(
+        ExpressionNode expression,
+        out BigInteger value)
+    {
+        switch (expression)
+        {
+            case LiteralNode<string> literal:
+                return BigInteger.TryParse(
+                    literal.Value,
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out value);
+
+            case UnaryExpressionNode
+            {
+                Operator: "-",
+                Operand: LiteralNode<string> literal
+            }:
+                if (BigInteger.TryParse(
+                        literal.Value,
+                        NumberStyles.None,
+                        CultureInfo.InvariantCulture,
+                        out var magnitude))
+                {
+                    value = -magnitude;
+                    return true;
+                }
+
+                break;
+        }
+
+        value = BigInteger.Zero;
+        return false;
+    }
+
+    private static int GetIntegerBitWidth(string type)
+    {
+        return type switch
+        {
+            TypeConst.I8 or TypeConst.U8 => 8,
+            TypeConst.I16 or TypeConst.U16 => 16,
+            TypeConst.I32 or TypeConst.U32 => 32,
+            TypeConst.I64 or TypeConst.U64 => 64,
+
+            _ => throw new Exception(
+                $"Cannot determine integer bit width for type '{type}'.")
+        };
     }
 
     private string CheckArithmeticExpression(
@@ -480,5 +618,10 @@ public sealed class TypeChecker
             "i64" => magnitude <= 9223372036854775808UL,
             _ => false
         };
+    }
+
+    public static bool IsUnsignedInteger(string typeName)
+    {
+        return typeName.StartsWith('u');
     }
 }

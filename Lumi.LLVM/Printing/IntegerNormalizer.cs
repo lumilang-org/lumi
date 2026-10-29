@@ -4,10 +4,8 @@ namespace Lumi.LLVM.Printing;
 
 internal static class IntegerNormalizer
 {
-    public static LLVMValueRef NormalizeToInt32(
-        LLVMValueRef value,
-        LLVMContextRef context,
-        LLVMBuilderRef builder)
+    public static LLVMValueRef NormalizeToSupportedInteger(
+        LLVMValueRef value)
     {
         var type = value.TypeOf;
 
@@ -19,17 +17,7 @@ internal static class IntegerNormalizer
 
         return type.IntWidth switch
         {
-            8 => builder.BuildSExt(
-                value,
-                context.Int32Type,
-                "print_value_i32"),
-
-            16 => builder.BuildSExt(
-                value,
-                context.Int32Type,
-                "print_value_i32"),
-
-            32 => value,
+            8 or 16 or 32 or 64 => value,
 
             var width => throw new NotSupportedException(
                 $"Integer printing does not support i{width}.")

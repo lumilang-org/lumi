@@ -19,17 +19,22 @@ internal sealed class IntegerPrintEmitter(
 
         var function = builder.InsertBlock.Parent;
 
-        var normalized = IntegerNormalizer.NormalizeToInt32(
-            value, context, builder);
+        var normalized =
+            IntegerNormalizer.NormalizeToSupportedInteger(value);
+
+        var integerType = normalized.TypeOf;
+
+        var zero = LLVMValueRef.CreateConstInt(integerType, 0);
+        var ten = LLVMValueRef.CreateConstInt(integerType, 10);
+        var one = LLVMValueRef.CreateConstInt(i32, 1);
 
         var buffer = PrintBuffer.Create(context, builder);
 
-        var zero = LLVMValueRef.CreateConstInt(i32, 0);
-        var one = LLVMValueRef.CreateConstInt(i32, 1);
-        var ten = LLVMValueRef.CreateConstInt(i32, 10);
+        var pointerSlot = builder.BuildAlloca(
+            bytePointerType, "itoa_ptr");
 
-        var pointerSlot = builder.BuildAlloca(bytePointerType, "itoa_ptr");
-        var valueSlot = builder.BuildAlloca(i32, "itoa_value");
+        var valueSlot = builder.BuildAlloca(
+            integerType, "itoa_value");
 
         var lastDigitPointer = buffer.BytePointer(
             PrintBuffer.Size - 1, "itoa_last_digit_ptr");
@@ -42,8 +47,8 @@ internal sealed class IntegerPrintEmitter(
             zero,
             "itoa_is_negative");
 
-        // Negation wraps for INT32_MIN; unsigned division handles
-        // the resulting bit pattern correctly.
+        // Negation wraps for the minimum signed integer.
+        // The resulting bit pattern is handled using unsigned division.
         var magnitude = builder.BuildSelect(
             isNegative,
             builder.BuildSub(zero, normalized, "itoa_negated"),
@@ -52,19 +57,25 @@ internal sealed class IntegerPrintEmitter(
 
         builder.BuildStore(magnitude, valueSlot);
 
-        var loopBlock = context.AppendBasicBlock(function, "itoa_loop");
+        var loopBlock = context.AppendBasicBlock(
+            function, "itoa_loop");
+
         var afterDigitsBlock = context.AppendBasicBlock(
             function, "itoa_after_digits");
-        var signBlock = context.AppendBasicBlock(function, "itoa_sign");
-        var outputBlock = context.AppendBasicBlock(function, "itoa_output");
+
+        var signBlock = context.AppendBasicBlock(
+            function, "itoa_sign");
+
+        var outputBlock = context.AppendBasicBlock(
+            function, "itoa_output");
 
         builder.BuildBr(loopBlock);
 
-        // Generate digits from right to left.
+        // Generate decimal digits from right to left.
         builder.PositionAtEnd(loopBlock);
 
         var currentValue = builder.BuildLoad2(
-            i32, valueSlot, "itoa_current");
+            integerType, valueSlot, "itoa_current");
 
         var digit = builder.BuildURem(
             currentValue, ten, "itoa_digit");
@@ -74,7 +85,7 @@ internal sealed class IntegerPrintEmitter(
 
         var asciiDigit = builder.BuildAdd(
             digit,
-            LLVMValueRef.CreateConstInt(i32, '0'),
+            LLVMValueRef.CreateConstInt(integerType, '0'),
             "itoa_digit_ascii");
 
         var digitByte = builder.BuildTrunc(
@@ -127,7 +138,7 @@ internal sealed class IntegerPrintEmitter(
             signBlock,
             outputBlock);
 
-        // Write '-' before the digits for negative numbers.
+        // Write '-' before the digits for negative values.
         builder.PositionAtEnd(signBlock);
 
         builder.BuildStore(
@@ -148,7 +159,6 @@ internal sealed class IntegerPrintEmitter(
             new[] { afterDigitsBlock, signBlock },
             2);
 
-        // Calculate the number of bytes to write.
         var startAddress = builder.BuildPtrToInt(
             outputStart, i64, "itoa_start_addr");
 
@@ -176,7 +186,6 @@ internal sealed class IntegerPrintEmitter(
             "itoa_write");
 
         // Leave the builder at itoa_output.
-        // The caller is responsible for emitting subsequent instructions
-        // and eventually terminating this block.
+        // The caller emits subsequent instructions and terminates the block.
     }
 }

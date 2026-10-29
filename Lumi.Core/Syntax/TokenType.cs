@@ -6,6 +6,7 @@ public enum TokenType
     KeywordFunc,
     KeywordReturn,
     KeywordIf,
+    KeywordWhile,
     KeywordElse,
     PrintFunc,
 
@@ -55,6 +56,14 @@ public enum TokenType
     LogicalAnd,
     LogicalOr,
     LogicalNot,
+
+    //Bitwise Operators
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
+    BitwiseNot,
+    LeftShift,
+    RightShift,
 
     //Special
     EndOfFile,

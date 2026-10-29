@@ -9,6 +9,7 @@ public sealed class Lexer
         { "struct", TokenType.KeywordStruct },
         { "func", TokenType.KeywordFunc },
         { "return", TokenType.KeywordReturn },
+        { TypeConst.While, TokenType.KeywordWhile },
         { TypeConst.Char, TokenType.TypeChar },
         { TypeConst.I16, TokenType.TypeI16 },
         { TypeConst.I32, TokenType.TypeI32 },
@@ -33,7 +34,10 @@ public sealed class Lexer
     public Lexer(string source)
     {
         _source = source;
-        if (_source.Length > 0) _currentChar = _source[0];
+        if (_source.Length > 0)
+        {
+            _currentChar = _source[0];
+        }
     }
 
     private void Advance()
@@ -50,27 +54,46 @@ public sealed class Lexer
     private void SkipWhitespaceAndComments()
     {
         while (_currentChar != '\0')
+        {
             if (char.IsWhiteSpace(_currentChar))
+            {
                 Advance();
+            }
             // Handle comments starting with //
             else if (_currentChar == '/' && Peek() == '/')
+            {
                 while (_currentChar != '\n' && _currentChar != '\0')
+                {
                     Advance();
+                }
+            }
             else
+            {
                 break;
+            }
+        }
     }
 
     public Token NextToken()
     {
         SkipWhitespaceAndComments();
 
-        if (_currentChar == '\0') return new Token(TokenType.EndOfFile, "");
+        if (_currentChar == '\0')
+        {
+            return new Token(TokenType.EndOfFile, "");
+        }
 
         // Identifiers and Keywords
-        if (char.IsLetter(_currentChar) || _currentChar == '_') return ReadIdentifierOrKeyword();
+        if (char.IsLetter(_currentChar) || _currentChar == '_')
+        {
+            return ReadIdentifierOrKeyword();
+        }
 
         // Number Literals
-        if (char.IsDigit(_currentChar)) return ReadNumber();
+        if (char.IsDigit(_currentChar))
+        {
+            return ReadNumber();
+        }
 
         // Single & Multi-character Operators
         return ReadOperatorOrSymbol();
@@ -79,15 +102,24 @@ public sealed class Lexer
     private Token ReadIdentifierOrKeyword()
     {
         var start = _position;
-        while (_currentChar != '\0' && (char.IsLetterOrDigit(_currentChar) || _currentChar == '_')) Advance();
+        while (_currentChar != '\0' && (char.IsLetterOrDigit(_currentChar) || _currentChar == '_'))
+        {
+            Advance();
+        }
 
         // Zero-allocation slice evaluation using Spans
         var lexemeSpan = _source.AsSpan(start, _position - start);
         var value = lexemeSpan.ToString();
 
-        if (value is TypeConst.True or TypeConst.False) return new Token(TokenType.BooleanLiteral, value);
+        if (value is TypeConst.True or TypeConst.False)
+        {
+            return new Token(TokenType.BooleanLiteral, value);
+        }
 
-        if (Keywords.TryGetValue(value, out var matchedType)) return new Token(matchedType, value);
+        if (Keywords.TryGetValue(value, out var matchedType))
+        {
+            return new Token(matchedType, value);
+        }
 
         return new Token(TokenType.Identifier, value);
     }
@@ -97,18 +129,24 @@ public sealed class Lexer
         var start = _position;
 
         while (!IsAtEnd() && char.IsDigit(_currentChar))
+        {
             Advance();
+        }
 
         if (!IsAtEnd() && _currentChar == '.')
         {
             Advance();
 
             if (IsAtEnd() || !char.IsDigit(_currentChar))
+            {
                 throw new Exception(
                     "Syntax Error: Expected a digit after decimal point.");
+            }
 
             while (!IsAtEnd() && char.IsDigit(_currentChar))
+            {
                 Advance();
+            }
         }
 
         var value = _source[start.._position];
@@ -145,24 +183,41 @@ public sealed class Lexer
             case '&':
                 Advance();
 
-                if (_currentChar != '&')
-                    throw new NotSupportedException("Unexpected character '&'");
+                if (_currentChar == '&')
+                {
+                    Advance();
+                    return new Token(TokenType.LogicalAnd, "&&");
+                }
 
-                Advance();
-                return new Token(TokenType.LogicalAnd, "&&");
+                return new Token(TokenType.BitwiseAnd, "&");
 
             case '|':
                 Advance();
 
-                if (_currentChar != '|')
-                    throw new NotSupportedException("Unexpected character '|'");
+                if (_currentChar == '|')
+                {
+                    Advance();
+                    return new Token(TokenType.LogicalOr, TypeConst.LogicalOr);
+                }
 
+                return new Token(TokenType.BitwiseOr, TypeConst.Pipe);
+
+            case '^':
                 Advance();
-                return new Token(TokenType.LogicalOr, "||");
+                return new Token(TokenType.BitwiseXor, "^");
 
+            case '~':
+                Advance();
+                return new Token(TokenType.BitwiseNot, "~");
 
             case '<':
                 Advance();
+
+                if (_currentChar == '<')
+                {
+                    Advance();
+                    return new Token(TokenType.LeftShift, "<<");
+                }
 
                 if (_currentChar == '=')
                 {
@@ -174,6 +229,12 @@ public sealed class Lexer
 
             case '>':
                 Advance();
+
+                if (_currentChar == '>')
+                {
+                    Advance();
+                    return new Token(TokenType.RightShift, ">>");
+                }
 
                 if (_currentChar == '=')
                 {
@@ -235,21 +296,31 @@ public sealed class Lexer
     {
         Advance(); // Consume opening quote
 
-        if (IsAtEnd()) throw new Exception("Lexer Error: Unterminated character literal.");
+        if (IsAtEnd())
+        {
+            throw new Exception("Lexer Error: Unterminated character literal.");
+        }
 
         var value = _currentChar;
 
-        if (value == '\'') throw new Exception("Lexer Error: Empty character literal.");
+        if (value == '\'')
+        {
+            throw new Exception("Lexer Error: Empty character literal.");
+        }
 
         if (value == '\\')
+        {
             throw new NotSupportedException(
                 "Escape sequences in character literals are not supported yet.");
+        }
 
         Advance(); // Consume character
 
         if (IsAtEnd() || _currentChar != '\'')
+        {
             throw new Exception(
                 "Lexer Error: Character literals must contain exactly one character.");
+        }
 
         Advance(); // Consume closing quote
 
