@@ -1,5 +1,6 @@
 using System.Globalization;
 using Lumi.Core.Ast;
+using Lumi.Core.Diagnostics;
 
 namespace Lumi.Core.Syntax;
 
@@ -30,17 +31,18 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
         }
     }
 
-    private void Consume(TokenType type)
+    private Token Consume(TokenType type)
     {
-        if (Current.Type == type)
-        {
-            Advance();
-        }
-        else
+        if (Current.Type != type)
         {
             throw new Exception(
                 $"Syntax Error: Expected token {type}, got {Current.Type} ('{Current.Value}') at position {_position}");
         }
+
+        var token = Current;
+        Advance();
+
+        return token;
     }
 
     private Precedence GetPrecedence(TokenType type)
@@ -79,24 +81,24 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
         };
     }
 
-    public FunctionDeclarationNode ParseFunction()
+    private FunctionDeclarationNode ParseFunction()
     {
-        Consume(TokenType.KeywordFunc);
+        var start = Consume(TokenType.KeywordFunc);
 
         var funcName = Current.Value;
         Consume(TokenType.Identifier);
 
         Consume(TokenType.LParen);
-        var parameters = ParseFunctionParameters();
-        Consume(TokenType.RParen);
 
+        var parameters = ParseFunctionParameters();
+
+        Consume(TokenType.RParen);
         Consume(TokenType.Arrow);
 
         var returnType = Current.Value;
         var returnToken = Lexer.Keywords.GetValueOrDefault(returnType);
 
         Consume(returnToken);
-
         Consume(TokenType.LBrace);
 
         var body = new List<StatementNode>();
@@ -107,13 +109,18 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
             body.Add(ParseStatement());
         }
 
-        Consume(TokenType.RBrace);
+        var closingBrace = Consume(TokenType.RBrace);
+
+        var span = CreateSpan(
+            start.Span.Start,
+            closingBrace.Span.End);
 
         return new FunctionDeclarationNode(
             funcName,
             parameters,
             returnType,
-            body);
+            body,
+            span);
     }
 
     public ProgramNode ParseProgram()
@@ -125,14 +132,19 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
             functions.Add(ParseFunction());
         }
 
-        return new ProgramNode(functions);
+        var span = functions.Count > 0
+            ? CreateSpan(
+                functions[0].Span!.Start,
+                functions[^1].Span!.End)
+            : Current.Span;
+
+        return new ProgramNode(functions, span);
     }
 
     private IReadOnlyList<FunctionParameterNode> ParseFunctionParameters()
     {
         var parameters = new List<FunctionParameterNode>();
 
-        // Empty parameter list.
         if (Current.Type == TokenType.RParen)
         {
             return parameters;
@@ -146,13 +158,19 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
                     $"Syntax Error: Expected parameter type, got {Current.Type} ('{Current.Value}').");
             }
 
+            var typeToken = Current;
             var type = Current.Value;
             Advance();
 
+            var nameToken = Current;
             var name = Current.Value;
             Consume(TokenType.Identifier);
 
-            parameters.Add(new FunctionParameterNode(type, name));
+            var span = CreateSpan(
+                typeToken.Span.Start,
+                nameToken.Span.End);
+
+            parameters.Add(new FunctionParameterNode(type, name, span));
 
             if (Current.Type != TokenType.Comma)
             {
@@ -186,7 +204,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
             }
             case TokenType.KeywordReturn:
             {
-                Consume(TokenType.KeywordReturn);
+                var start = Current.Span.Start;
+                var returnToken = Consume(TokenType.KeywordReturn);
 
                 ExpressionNode? value = null;
 
@@ -196,21 +215,29 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
                     value = ParseExpression();
                 }
 
-                return new ReturnStatementNode(value);
+                var end = value?.Span?.End ?? returnToken.Span.End;
+                var span = CreateSpan(start, end);
+
+                return new ReturnStatementNode(value, span);
             }
             case TokenType.KeywordIf:
                 return ParseIfStatement();
             case TokenType.KeywordWhile:
                 return ParseWhileStatement();
             case TokenType.KeywordBreak:
-                Advance();
-                return new BreakStatementNode();
+            {
+                var token = Consume(TokenType.KeywordBreak);
+                return new BreakStatementNode(token.Span);
+            }
 
             case TokenType.KeywordContinue:
-                Advance();
-                return new ContinueStatementNode();
+            {
+                var token = Consume(TokenType.KeywordContinue);
+                return new ContinueStatementNode(token.Span);
+            }
             case TokenType.PrintFunc:
             {
+                var start = Current.Span.Start;
                 var functionName = Current.Value;
                 var appendNewline = functionName == "println";
 
@@ -224,10 +251,11 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
                 }
 
                 var expression = ParseExpression();
+                var closingParen = Consume(TokenType.RParen);
 
-                Consume(TokenType.RParen);
+                var span = CreateSpan(start, closingParen.Span.End);
 
-                return new PrintStatementNode(expression, appendNewline);
+                return new PrintStatementNode(expression, span, appendNewline);
             }
             case TokenType.Identifier when Next.Type == TokenType.Assign:
             {
@@ -240,16 +268,18 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
 
             default:
             {
-                // Treat plain expressions as expression statements (e.g., a + b)
                 var expr = ParseExpression();
-                return new ExpressionStatementNode(expr);
+
+                return new ExpressionStatementNode(
+                    expr,
+                    expr.Span);
             }
         }
     }
 
     private ForStatementNode ParseForStatement()
     {
-        Consume(TokenType.KeywordFor);
+        var start = Consume(TokenType.KeywordFor);
 
         StatementNode? initializer = null;
 
@@ -278,16 +308,21 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
             update = Current.Type == TokenType.Identifier &&
                      Next.Type == TokenType.Assign
                 ? ParseAssignmentStatement()
-                : new ExpressionStatementNode(ParseExpression());
+                : ParseExpressionStatement();
         }
 
-        var body = ParseBlock();
+        var body = ParseBlock(out var bodySpan);
+
+        var span = CreateSpan(
+            start.Span.Start,
+            bodySpan.End);
 
         return new ForStatementNode(
             initializer,
             condition,
             update,
-            body);
+            body,
+            span);
     }
 
     private static bool IsTypeToken(TokenType type)
@@ -308,46 +343,57 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
 
     private WhileStatementNode ParseWhileStatement()
     {
-        Consume(TokenType.KeywordWhile);
+        var start = Consume(TokenType.KeywordWhile);
 
         var condition = ParseExpression();
-        var body = ParseBlock();
+        var body = ParseBlock(out var bodySpan);
 
-        return new WhileStatementNode(condition, body);
+        var span = CreateSpan(
+            start.Span.Start,
+            bodySpan.End);
+
+        return new WhileStatementNode(condition, body, span);
     }
 
     private IfStatementNode ParseIfStatement()
     {
-        Consume(TokenType.KeywordIf);
+        var start = Consume(TokenType.KeywordIf);
 
         var condition = ParseExpression();
-        var thenBody = ParseBlock();
+        var thenBody = ParseBlock(out var thenSpan);
 
         IReadOnlyList<StatementNode>? elseBody = null;
+        var end = thenSpan.End;
 
         if (Current.Type == TokenType.KeywordElse)
         {
-            Advance();
+            Consume(TokenType.KeywordElse);
 
             if (Current.Type == TokenType.KeywordIf)
             {
-                elseBody =
-                [
-                    ParseIfStatement()
-                ];
+                var nestedIf = ParseIfStatement();
+
+                elseBody = [nestedIf];
+                end = nestedIf.Span!.End;
             }
             else
             {
-                elseBody = ParseBlock();
+                elseBody = ParseBlock(out var elseSpan);
+                end = elseSpan.End;
             }
         }
 
-        return new IfStatementNode(condition, thenBody, elseBody);
+        var span = CreateSpan(start.Span.Start, end);
+
+        return new IfStatementNode(
+            condition,
+            thenBody,
+            span, elseBody);
     }
 
-    private IReadOnlyList<StatementNode> ParseBlock()
+    private IReadOnlyList<StatementNode> ParseBlock(out SourceSpan span)
     {
-        Consume(TokenType.LBrace);
+        var openingBrace = Consume(TokenType.LBrace);
 
         var statements = new List<StatementNode>();
 
@@ -357,7 +403,11 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
             statements.Add(ParseStatement());
         }
 
-        Consume(TokenType.RBrace);
+        var closingBrace = Consume(TokenType.RBrace);
+
+        span = CreateSpan(
+            openingBrace.Span.Start,
+            closingBrace.Span.End);
 
         return statements;
     }
@@ -375,6 +425,15 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
         }
 
         return leftExpr;
+    }
+
+    private ExpressionStatementNode ParseExpressionStatement()
+    {
+        var expression = ParseExpression();
+
+        return new ExpressionStatementNode(
+            expression,
+            expression.Span);
     }
 
 
@@ -398,59 +457,74 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
 
     private ExpressionNode ParseGroupedExpression()
     {
-        Advance(); // Move past '('
+        Consume(TokenType.LParen);
 
         var expression = ParseExpression();
 
-        if (Current.Type != TokenType.RParen)
-        {
-            throw new Exception("Syntax Error: Expected ')' after expression");
-        }
-
-        Advance();
+        Consume(TokenType.RParen);
 
         return expression;
     }
 
     private ExpressionNode ParseCharLiteral()
     {
-        var node = new LiteralNode<char>(Current.Value[0]);
+        var token = Current;
         Advance();
-        return node;
+
+        return new LiteralNode<char>(
+            token.Value[0],
+            token.Span);
     }
 
     private ExpressionNode ParseUnaryExpression()
     {
-        var op = Current.Value;
+        var operatorToken = Current;
+        var op = operatorToken.Value;
+
         Advance();
 
         var operand = ParseExpression(Precedence.Prefix);
-        return new UnaryExpressionNode(op, operand);
+
+        var span = CreateSpan(
+            operatorToken.Span.Start,
+            operand.Span!.End);
+
+        return new UnaryExpressionNode(op, operand, span);
     }
 
     private ExpressionNode ParseBooleanLiteral()
     {
-        var node = new LiteralNode<bool>(Current.Value.Equals("true", StringComparison.InvariantCulture));
+        var token = Current;
         Advance();
-        return node;
+
+        return new LiteralNode<bool>(
+            token.Value.Equals("true", StringComparison.InvariantCulture),
+            token.Span);
     }
 
     private ExpressionNode ParseInfix(ExpressionNode left)
     {
-        var op = Current.Value;
+        var operatorToken = Current;
+        var op = operatorToken.Value;
         var currentPrecedence = GetPrecedence(Current.Type);
 
-        Advance(); // Step OVER the operator token (e.g., past '+')
+        Advance();
 
-        // Parse the right-hand element with current binding precedence
         var right = ParseExpression(currentPrecedence);
-        return new BinaryExpressionNode(left, op, right);
+
+        var span = CreateSpan(
+            left.Span!.Start,
+            right.Span!.End);
+
+        return new BinaryExpressionNode(left, op, right, span);
     }
 
 
     private ExpressionNode ParseNumberLiteral()
     {
-        var value = Current.Value;
+        var token = Current;
+        var value = token.Value;
+
         Advance();
 
         if (value.Contains('.'))
@@ -465,20 +539,26 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
                     $"Syntax Error: Invalid decimal literal '{value}'");
             }
 
-            return new LiteralNode<double>(decimalValue);
+            return new LiteralNode<double>(
+                decimalValue,
+                token.Span);
         }
 
-        return new LiteralNode<string>(value);
+        return new LiteralNode<string>(
+            value,
+            token.Span);
     }
 
     private ExpressionNode ParseIdentifier()
     {
-        var name = Current.Value;
+        var identifierToken = Current;
+        var name = identifierToken.Value;
+
         Advance();
 
         if (Current.Type != TokenType.LParen)
         {
-            return new IdentifierNode(name);
+            return new IdentifierNode(name, identifierToken.Span);
         }
 
         Consume(TokenType.LParen);
@@ -500,28 +580,43 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
             }
         }
 
-        Consume(TokenType.RParen);
+        var closingParen = Consume(TokenType.RParen);
 
-        return new FunctionCallExpressionNode(name, arguments);
+        var span = CreateSpan(
+            identifierToken.Span.Start,
+            closingParen.Span.End);
+
+        return new FunctionCallExpressionNode(name, arguments, span);
     }
 
     private VariableDeclarationNode ParseVariableDeclaration()
     {
+        var start = Current.Span.Start;
+
         var type = Current.Value;
         Advance();
 
-        var name = Current.Value;
+        var nameToken = Current;
+        var name = nameToken.Value;
         Consume(TokenType.Identifier);
 
         Consume(TokenType.Assign);
 
         var initializer = ParseExpression();
 
-        return new VariableDeclarationNode(type, name, initializer);
+        var span = CreateSpan(start, initializer.Span!.End);
+
+        return new VariableDeclarationNode(
+            type,
+            name,
+            initializer,
+            span);
     }
 
     private AssignmentStatementNode ParseAssignmentStatement()
     {
+        var start = Current.Span.Start;
+
         var name = Current.Value;
         Consume(TokenType.Identifier);
 
@@ -529,6 +624,18 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
 
         var value = ParseExpression();
 
-        return new AssignmentStatementNode(name, value);
+        var span = CreateSpan(start, value.Span!.End);
+
+        return new AssignmentStatementNode(name, value, span);
+    }
+
+    private SourceSpan CreateSpan(SourceLocation start, SourceLocation end)
+    {
+        return new SourceSpan(start, end);
+    }
+
+    private SourceSpan CreateSpan(SourceSpan start, SourceSpan end)
+    {
+        return CreateSpan(start.Start, end.End);
     }
 }

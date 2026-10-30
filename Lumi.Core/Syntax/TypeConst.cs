@@ -43,4 +43,5 @@ public static class TypeConst
     public const string For = "for";
     public const string Break = "break";
     public const string Continue = "continue";
+    public const string Error = "<error>";
 }

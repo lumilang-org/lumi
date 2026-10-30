@@ -1,3 +1,5 @@
+using Lumi.Core.Diagnostics;
+
 namespace Lumi.Core.Syntax;
 
 public sealed class Lexer
@@ -31,7 +33,9 @@ public sealed class Lexer
     };
 
     private readonly string _source;
+    private int _column = 1;
     private char _currentChar = '\0';
+    private int _line = 1;
     private int _position;
 
     public Lexer(string source)
@@ -45,8 +49,35 @@ public sealed class Lexer
 
     private void Advance()
     {
-        _position++;
-        _currentChar = _position < _source.Length ? _source[_position] : '\0';
+        if (_currentChar == '\r')
+        {
+            _position++;
+
+            // Treat CRLF as a single newline.
+            if (_position < _source.Length &&
+                _source[_position] == '\n')
+            {
+                _position++;
+            }
+
+            _line++;
+            _column = 1;
+        }
+        else if (_currentChar == '\n')
+        {
+            _position++;
+            _line++;
+            _column = 1;
+        }
+        else
+        {
+            _position++;
+            _column++;
+        }
+
+        _currentChar = _position < _source.Length
+            ? _source[_position]
+            : '\0';
     }
 
     private char Peek()
@@ -83,53 +114,53 @@ public sealed class Lexer
 
         if (_currentChar == '\0')
         {
-            return new Token(TokenType.EndOfFile, "");
+            var location = new SourceLocation(_line, _column);
+            return CreateToken(TokenType.EndOfFile, string.Empty, location);
         }
 
-        // Identifiers and Keywords
         if (char.IsLetter(_currentChar) || _currentChar == '_')
         {
             return ReadIdentifierOrKeyword();
         }
 
-        // Number Literals
         if (char.IsDigit(_currentChar))
         {
             return ReadNumber();
         }
 
-        // Single & Multi-character Operators
         return ReadOperatorOrSymbol();
     }
 
     private Token ReadIdentifierOrKeyword()
     {
-        var start = _position;
-        while (_currentChar != '\0' && (char.IsLetterOrDigit(_currentChar) || _currentChar == '_'))
+        var start = new SourceLocation(_line, _column);
+        var startPosition = _position;
+
+        while (_currentChar != '\0' &&
+               (char.IsLetterOrDigit(_currentChar) || _currentChar == '_'))
         {
             Advance();
         }
 
-        // Zero-allocation slice evaluation using Spans
-        var lexemeSpan = _source.AsSpan(start, _position - start);
-        var value = lexemeSpan.ToString();
+        var value = _source[startPosition.._position];
 
         if (value is TypeConst.True or TypeConst.False)
         {
-            return new Token(TokenType.BooleanLiteral, value);
+            return CreateToken(TokenType.BooleanLiteral, value, start);
         }
 
         if (Keywords.TryGetValue(value, out var matchedType))
         {
-            return new Token(matchedType, value);
+            return CreateToken(matchedType, value, start);
         }
 
-        return new Token(TokenType.Identifier, value);
+        return CreateToken(TokenType.Identifier, value, start);
     }
 
     private Token ReadNumber()
     {
-        var start = _position;
+        var start = new SourceLocation(_line, _column);
+        var startPosition = _position;
 
         while (!IsAtEnd() && char.IsDigit(_currentChar))
         {
@@ -152,13 +183,16 @@ public sealed class Lexer
             }
         }
 
-        var value = _source[start.._position];
-        return new Token(TokenType.Number, value);
+        var value = _source[startPosition.._position];
+
+        return CreateToken(TokenType.Number, value, start);
     }
 
     private Token ReadOperatorOrSymbol()
     {
+        var start = new SourceLocation(_line, _column);
         var op = _currentChar;
+
         switch (op)
         {
             case '=':
@@ -167,10 +201,10 @@ public sealed class Lexer
                 if (_currentChar == '=')
                 {
                     Advance();
-                    return new Token(TokenType.EqualEqual, "==");
+                    return CreateToken(TokenType.EqualEqual, "==", start);
                 }
 
-                return new Token(TokenType.Assign, "=");
+                return CreateToken(TokenType.Assign, "=", start);
 
             case '!':
                 Advance();
@@ -178,10 +212,10 @@ public sealed class Lexer
                 if (_currentChar == '=')
                 {
                     Advance();
-                    return new Token(TokenType.BangEqual, "!=");
+                    return CreateToken(TokenType.BangEqual, "!=", start);
                 }
 
-                return new Token(TokenType.LogicalNot, "!");
+                return CreateToken(TokenType.LogicalNot, "!", start);
 
             case '&':
                 Advance();
@@ -189,10 +223,10 @@ public sealed class Lexer
                 if (_currentChar == '&')
                 {
                     Advance();
-                    return new Token(TokenType.LogicalAnd, "&&");
+                    return CreateToken(TokenType.LogicalAnd, "&&", start);
                 }
 
-                return new Token(TokenType.BitwiseAnd, "&");
+                return CreateToken(TokenType.BitwiseAnd, "&", start);
 
             case '|':
                 Advance();
@@ -200,18 +234,18 @@ public sealed class Lexer
                 if (_currentChar == '|')
                 {
                     Advance();
-                    return new Token(TokenType.LogicalOr, TypeConst.LogicalOr);
+                    return CreateToken(TokenType.LogicalOr, TypeConst.LogicalOr, start);
                 }
 
-                return new Token(TokenType.BitwiseOr, TypeConst.Pipe);
+                return CreateToken(TokenType.BitwiseOr, TypeConst.Pipe, start);
 
             case '^':
                 Advance();
-                return new Token(TokenType.BitwiseXor, "^");
+                return CreateToken(TokenType.BitwiseXor, "^", start);
 
             case '~':
                 Advance();
-                return new Token(TokenType.BitwiseNot, "~");
+                return CreateToken(TokenType.BitwiseNot, "~", start);
 
             case '<':
                 Advance();
@@ -219,16 +253,16 @@ public sealed class Lexer
                 if (_currentChar == '<')
                 {
                     Advance();
-                    return new Token(TokenType.LeftShift, "<<");
+                    return CreateToken(TokenType.LeftShift, "<<", start);
                 }
 
                 if (_currentChar == '=')
                 {
                     Advance();
-                    return new Token(TokenType.LessThanOrEqual, "<=");
+                    return CreateToken(TokenType.LessThanOrEqual, "<=", start);
                 }
 
-                return new Token(TokenType.LessThan, "<");
+                return CreateToken(TokenType.LessThan, "<", start);
 
             case '>':
                 Advance();
@@ -236,71 +270,86 @@ public sealed class Lexer
                 if (_currentChar == '>')
                 {
                     Advance();
-                    return new Token(TokenType.RightShift, ">>");
+                    return CreateToken(TokenType.RightShift, ">>", start);
                 }
 
                 if (_currentChar == '=')
                 {
                     Advance();
-                    return new Token(TokenType.GreaterThanOrEqual, ">=");
+                    return CreateToken(TokenType.GreaterThanOrEqual, ">=", start);
                 }
 
-                return new Token(TokenType.GreaterThan, ">");
+                return CreateToken(TokenType.GreaterThan, ">", start);
 
             case '+':
                 Advance();
-                return new Token(TokenType.Plus, "+");
+                return CreateToken(TokenType.Plus, "+", start);
+
             case '*':
                 Advance();
-                return new Token(TokenType.Star, "*");
+                return CreateToken(TokenType.Star, "*", start);
+
             case '/':
                 Advance();
-                return new Token(TokenType.Slash, "/");
+                return CreateToken(TokenType.Slash, "/", start);
+
             case '-':
                 if (Peek() == '>')
                 {
                     Advance();
                     Advance();
-                    return new Token(TokenType.Arrow, "->");
+                    return CreateToken(TokenType.Arrow, "->", start);
                 }
 
                 Advance();
-                return new Token(TokenType.Minus, "-");
+                return CreateToken(TokenType.Minus, "-", start);
+
             case ',':
                 Advance();
-                return new Token(TokenType.Comma, ",");
+                return CreateToken(TokenType.Comma, ",", start);
+
             case ';':
                 Advance();
-                return new Token(TokenType.Semicolon, ";");
+                return CreateToken(TokenType.Semicolon, ";", start);
+
             case '{':
                 Advance();
-                return new Token(TokenType.LBrace, "{");
+                return CreateToken(TokenType.LBrace, "{", start);
+
             case '}':
                 Advance();
-                return new Token(TokenType.RBrace, "}");
+                return CreateToken(TokenType.RBrace, "}", start);
+
             case '(':
                 Advance();
-                return new Token(TokenType.LParen, "(");
+                return CreateToken(TokenType.LParen, "(", start);
+
             case ')':
                 Advance();
-                return new Token(TokenType.RParen, ")");
+                return CreateToken(TokenType.RParen, ")", start);
+
             case '[':
                 Advance();
-                return new Token(TokenType.LBracket, "[");
+                return CreateToken(TokenType.LBracket, "[", start);
+
             case ']':
                 Advance();
-                return new Token(TokenType.RBracket, "]");
+                return CreateToken(TokenType.RBracket, "]", start);
+
             case '\'':
                 return ReadCharacterLiteral();
-        }
 
-        Advance();
-        return new Token(TokenType.Unknown, op.ToString());
+            default:
+                Advance();
+                return CreateToken(TokenType.Unknown, op.ToString(), start);
+        }
     }
 
     private Token ReadCharacterLiteral()
     {
-        Advance(); // Consume opening quote
+        var start = new SourceLocation(_line, _column);
+
+        Advance();
 
         if (IsAtEnd())
         {
@@ -320,7 +369,7 @@ public sealed class Lexer
                 "Escape sequences in character literals are not supported yet.");
         }
 
-        Advance(); // Consume character
+        Advance();
 
         if (IsAtEnd() || _currentChar != '\'')
         {
@@ -328,13 +377,26 @@ public sealed class Lexer
                 "Lexer Error: Character literals must contain exactly one character.");
         }
 
-        Advance(); // Consume closing quote
+        Advance();
 
-        return new Token(TokenType.Character, value.ToString());
+        return CreateToken(TokenType.Character, value.ToString(), start);
     }
 
     private bool IsAtEnd()
     {
         return _position >= _source.Length;
+    }
+
+    private Token CreateToken(
+        TokenType type,
+        string value,
+        SourceLocation start)
+    {
+        var end = new SourceLocation(_line, _column);
+
+        return new Token(
+            type,
+            value,
+            new SourceSpan(start, end));
     }
 }

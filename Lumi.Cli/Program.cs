@@ -18,7 +18,10 @@ do
 {
     token = lexer.NextToken();
     tokens.Add(token);
-    Console.WriteLine($"Token: {token.Type} | Value: \"{token.Value}\"");
+    Console.WriteLine(
+        $"{token.Type,-20} {token.Value,-12} " +
+        $"{token.Span.Start.Line}:{token.Span.Start.Column} - " +
+        $"{token.Span.End.Line}:{token.Span.End.Column}");
 } while (token.Type != TokenType.EndOfFile);
 
 var parser = new Parser(tokens);
