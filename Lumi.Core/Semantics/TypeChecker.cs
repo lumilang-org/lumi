@@ -57,10 +57,15 @@ public sealed class TypeChecker
         switch (statement)
         {
             case VariableDeclarationNode varDecl:
+
                 var initializerType = CheckExpression(
                     varDecl.Initializer,
                     scope,
                     varDecl.Type);
+
+                EnsureValueExpression(
+                    varDecl.Initializer,
+                    initializerType);
 
                 if (varDecl.Type.StartsWith('u') &&
                     varDecl.Initializer is UnaryExpressionNode { Operator: "-" })
@@ -347,6 +352,17 @@ public sealed class TypeChecker
         return signature.ReturnType;
     }
 
+    private static void EnsureValueExpression(
+        ExpressionNode expression,
+        string expressionType)
+    {
+        if (expressionType == TypeConst.Void)
+        {
+            throw new Exception(
+                "Semantic Error: A void expression cannot be used where a value is required.");
+        }
+    }
+
     private string CheckUnaryExpression(
         UnaryExpressionNode unary,
         SymbolTable scope)
@@ -399,6 +415,9 @@ public sealed class TypeChecker
             binary.Right,
             scope,
             rightExpectedType);
+
+        EnsureValueExpression(binary.Left, leftType);
+        EnsureValueExpression(binary.Right, rightType);
 
         if (IsArithmeticOperator(binary.Operator))
         {
