@@ -104,3 +104,16 @@ public sealed class WhileStatementNode(
 
     public IReadOnlyList<StatementNode> Body { get; } = body;
 }
+
+public sealed class ForStatementNode(
+    StatementNode? initializer,
+    ExpressionNode? condition,
+    StatementNode? update,
+    IReadOnlyList<StatementNode> body)
+    : StatementNode
+{
+    public StatementNode? Initializer { get; } = initializer;
+    public ExpressionNode? Condition { get; } = condition;
+    public StatementNode? Update { get; } = update;
+    public IReadOnlyList<StatementNode> Body { get; } = body;
+}

@@ -6,6 +6,7 @@ public enum TokenType
     KeywordFunc,
     KeywordReturn,
     KeywordIf,
+    KeywordFor,
     KeywordWhile,
     KeywordBreak,
     KeywordContinue,

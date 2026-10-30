@@ -158,6 +158,64 @@ public sealed class TypeChecker
 
                 break;
             }
+            case ForStatementNode forStatement:
+            {
+                // The initializer variable must only exist within this loop.
+                var forScope = new SymbolTable(scope);
+
+                // Initializer
+                if (forStatement.Initializer is not null)
+                {
+                    CheckStatement(
+                        forStatement.Initializer,
+                        forScope,
+                        expectedReturnType);
+                }
+
+                // Condition
+                if (forStatement.Condition is not null)
+                {
+                    var conditionType = CheckExpression(
+                        forStatement.Condition,
+                        forScope);
+
+                    if (conditionType != TypeConst.Bool)
+                    {
+                        throw new Exception(
+                            $"Type Mismatch: A for condition must be 'bool', but got '{conditionType}'.");
+                    }
+                }
+
+                // Update and body are inside the loop scope.
+                _loopDepth++;
+
+                try
+                {
+                    if (forStatement.Update is not null)
+                    {
+                        CheckStatement(
+                            forStatement.Update,
+                            forScope,
+                            expectedReturnType);
+                    }
+
+                    var bodyScope = new SymbolTable(forScope);
+
+                    foreach (var stmt in forStatement.Body)
+                    {
+                        CheckStatement(
+                            stmt,
+                            bodyScope,
+                            expectedReturnType);
+                    }
+                }
+                finally
+                {
+                    _loopDepth--;
+                }
+
+                break;
+            }
         }
     }
 
@@ -258,7 +316,8 @@ public sealed class TypeChecker
             return CheckArithmeticExpression(
                 binary,
                 leftType,
-                rightType);
+                rightType,
+                expectedType);
         }
 
         if (IsBitwiseOperator(binary.Operator))
@@ -402,13 +461,22 @@ public sealed class TypeChecker
     private string CheckArithmeticExpression(
         BinaryExpressionNode binary,
         string leftType,
-        string rightType)
+        string rightType,
+        string? expectedType = null)
     {
         if (!IsNumericType(leftType) || !IsNumericType(rightType))
         {
             throw new Exception(
                 $"Type Mismatch: Operator '{binary.Operator}' " +
                 $"requires numeric operands, got '{leftType}' and '{rightType}'.");
+        }
+
+        if (expectedType is not null &&
+            TypePromoter.IsIntegerType(expectedType) &&
+            leftType == expectedType &&
+            rightType == expectedType)
+        {
+            return expectedType;
         }
 
         // Floating-point promotion is not handled by TypePromoter yet.

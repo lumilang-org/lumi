@@ -128,16 +128,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
                 TokenType.TypeBool or
                 TokenType.TypeChar:
             {
-                var type = Current.Value;
-                Advance();
-
-                var name = Current.Value;
-                Consume(TokenType.Identifier);
-
-                Consume(TokenType.Assign);
-
-                var initializer = ParseExpression();
-                return new VariableDeclarationNode(type, name, initializer);
+                return ParseVariableDeclaration();
             }
             case TokenType.KeywordReturn:
             {
@@ -179,15 +170,13 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
             }
             case TokenType.Identifier when Next.Type == TokenType.Assign:
             {
-                var name = Current.Value;
-                Advance(); // identifier
-
-                Consume(TokenType.Assign);
-
-                var value = ParseExpression();
-
-                return new AssignmentStatementNode(name, value);
+                return ParseAssignmentStatement();
             }
+            case TokenType.KeywordFor:
+            {
+                return ParseForStatement();
+            }
+
             default:
             {
                 // Treat plain expressions as expression statements (e.g., a + b)
@@ -195,6 +184,65 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
                 return new ExpressionStatementNode(expr);
             }
         }
+    }
+
+    private ForStatementNode ParseForStatement()
+    {
+        Consume(TokenType.KeywordFor);
+
+        StatementNode? initializer = null;
+
+        if (Current.Type != TokenType.Semicolon)
+        {
+            initializer = IsTypeToken(Current.Type)
+                ? ParseVariableDeclaration()
+                : ParseAssignmentStatement();
+        }
+
+        Consume(TokenType.Semicolon);
+
+        ExpressionNode? condition = null;
+
+        if (Current.Type != TokenType.Semicolon)
+        {
+            condition = ParseExpression();
+        }
+
+        Consume(TokenType.Semicolon);
+
+        StatementNode? update = null;
+
+        if (Current.Type != TokenType.LBrace)
+        {
+            update = Current.Type == TokenType.Identifier &&
+                     Next.Type == TokenType.Assign
+                ? ParseAssignmentStatement()
+                : new ExpressionStatementNode(ParseExpression());
+        }
+
+        var body = ParseBlock();
+
+        return new ForStatementNode(
+            initializer,
+            condition,
+            update,
+            body);
+    }
+
+    private static bool IsTypeToken(TokenType type)
+    {
+        return type is
+            TokenType.TypeI16 or
+            TokenType.TypeI32 or
+            TokenType.TypeI64 or
+            TokenType.TypeU16 or
+            TokenType.TypeU32 or
+            TokenType.TypeU64 or
+            TokenType.TypeF16 or
+            TokenType.TypeF32 or
+            TokenType.TypeF64 or
+            TokenType.TypeBool or
+            TokenType.TypeChar;
     }
 
     private WhileStatementNode ParseWhileStatement()
@@ -367,5 +415,32 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
         var node = new IdentifierNode(Current.Value);
         Advance();
         return node;
+    }
+
+    private VariableDeclarationNode ParseVariableDeclaration()
+    {
+        var type = Current.Value;
+        Advance();
+
+        var name = Current.Value;
+        Consume(TokenType.Identifier);
+
+        Consume(TokenType.Assign);
+
+        var initializer = ParseExpression();
+
+        return new VariableDeclarationNode(type, name, initializer);
+    }
+
+    private AssignmentStatementNode ParseAssignmentStatement()
+    {
+        var name = Current.Value;
+        Consume(TokenType.Identifier);
+
+        Consume(TokenType.Assign);
+
+        var value = ParseExpression();
+
+        return new AssignmentStatementNode(name, value);
     }
 }

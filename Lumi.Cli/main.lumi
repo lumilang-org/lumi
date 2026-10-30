@@ -1,12 +1,21 @@
 func main() -> void {
-    i32 i = 0
+    for i32 i = 0; i < 3; i = i + 1 {
+        i32 j = 0
 
-    while i < 10 {
-        if i == 3 {
-            break
+        while j < 5 {
+            j = j + 1
+
+            if j == 2 {
+                continue
+            }
+
+            if j == 4 {
+                break
+            }
+
+            println(i * 10 + j)
         }
 
-        println(i)
-        i = i + 1
+        println(999)
     }
 }

@@ -10,6 +10,7 @@ public sealed class Lexer
         { "func", TokenType.KeywordFunc },
         { "return", TokenType.KeywordReturn },
         { TypeConst.While, TokenType.KeywordWhile },
+        { TypeConst.For, TokenType.KeywordFor },
         { TypeConst.Break, TokenType.KeywordBreak },
         { TypeConst.Continue, TokenType.KeywordContinue },
         { TypeConst.Char, TokenType.TypeChar },
@@ -268,6 +269,9 @@ public sealed class Lexer
             case ',':
                 Advance();
                 return new Token(TokenType.Comma, ",");
+            case ';':
+                Advance();
+                return new Token(TokenType.Semicolon, ";");
             case '{':
                 Advance();
                 return new Token(TokenType.LBrace, "{");

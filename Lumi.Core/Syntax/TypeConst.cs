@@ -23,6 +23,7 @@ public static class TypeConst
     public const string Star = "*";
     public const string Slash = "/";
     public const string Equals = "=";
+    public const string Semicolon = ";";
     public const string EqualsEquals = "==";
     public const string BangEquals = "!=";
     public const string LessThan = "<";
@@ -39,6 +40,7 @@ public static class TypeConst
     public const string ShiftLeft = "<<";
     public const string ShiftRight = ">>";
     public const string While = "while";
+    public const string For = "for";
     public const string Break = "break";
     public const string Continue = "continue";
 }

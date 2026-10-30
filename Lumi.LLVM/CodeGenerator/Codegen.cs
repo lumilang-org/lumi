@@ -47,7 +47,7 @@ public sealed class Codegen
 
         _currentScope.Clear();
 
-        GenerateStatements(funcNode.Body);
+        GenerateScopedStatements(funcNode.Body);
 
         var currentBlock = _builder.InsertBlock;
 
@@ -184,6 +184,133 @@ public sealed class Codegen
             case ContinueStatementNode:
                 GenerateContinueStatement();
                 break;
+
+            case ForStatementNode forStmt:
+            {
+                GenerateForStatement(forStmt);
+                break;
+            }
+
+            default:
+            {
+                throw new NotSupportedException(
+                    $"Code generation not implemented for {statement.GetType().Name}");
+            }
+        }
+    }
+
+    private void GenerateScopedStatements(
+        IReadOnlyList<StatementNode> statements)
+    {
+        _currentScope = _currentScope.EnterScope();
+
+        try
+        {
+            GenerateStatements(statements);
+        }
+        finally
+        {
+            _currentScope = _currentScope.ExitScope();
+        }
+    }
+
+    private void GenerateForStatement(ForStatementNode forStmt)
+    {
+        // The initializer variable belongs to the for-loop scope.
+        _currentScope = _currentScope.EnterScope();
+
+        try
+        {
+            // Initializer: execute exactly once.
+            if (forStmt.Initializer is not null)
+            {
+                GenerateStatement(forStmt.Initializer);
+            }
+
+            var function = _builder.InsertBlock.Parent;
+
+            var conditionBlock = _context.AppendBasicBlock(
+                function, "for.condition");
+
+            var bodyBlock = _context.AppendBasicBlock(
+                function, "for.body");
+
+            var updateBlock = _context.AppendBasicBlock(
+                function, "for.update");
+
+            var exitBlock = _context.AppendBasicBlock(
+                function, "for.exit");
+
+            // Enter the loop.
+            _builder.BuildBr(conditionBlock);
+
+            // Condition.
+            _builder.PositionAtEnd(conditionBlock);
+
+            if (forStmt.Condition is not null)
+            {
+                var condition = GenerateExpression(forStmt.Condition);
+
+                if (condition.TypeOf.Kind != LLVMTypeKind.LLVMIntegerTypeKind ||
+                    condition.TypeOf.IntWidth != 1)
+                {
+                    throw new InvalidOperationException(
+                        "For loop condition must be a boolean.");
+                }
+
+                _builder.BuildCondBr(
+                    condition,
+                    bodyBlock,
+                    exitBlock);
+            }
+            else
+            {
+                // An omitted condition means an infinite loop.
+                _builder.BuildBr(bodyBlock);
+            }
+
+            // Register break and continue targets.
+            _loopTargets.Push(new LoopTargets(
+                exitBlock,
+                updateBlock));
+
+            try
+            {
+                // Body.
+                _builder.PositionAtEnd(bodyBlock);
+
+                GenerateStatements(forStmt.Body);
+
+                if (!HasTerminator(_builder.InsertBlock))
+                {
+                    _builder.BuildBr(updateBlock);
+                }
+
+                // Update.
+                _builder.PositionAtEnd(updateBlock);
+
+                if (forStmt.Update is not null)
+                {
+                    GenerateStatement(forStmt.Update);
+                }
+
+                if (!HasTerminator(_builder.InsertBlock))
+                {
+                    _builder.BuildBr(conditionBlock);
+                }
+            }
+            finally
+            {
+                _loopTargets.Pop();
+            }
+
+            // Continue after the loop.
+            _builder.PositionAtEnd(exitBlock);
+        }
+        finally
+        {
+            // Restore the enclosing lexical scope.
+            _currentScope = _currentScope.ExitScope();
         }
     }
 
@@ -214,16 +341,7 @@ public sealed class Codegen
         {
             _builder.PositionAtEnd(bodyBlock);
 
-            foreach (var statement in whileStmt.Body)
-            {
-                GenerateStatement(statement);
-
-                // Don't generate more instructions after a terminator.
-                if (_builder.InsertBlock.Terminator.Handle != IntPtr.Zero)
-                {
-                    break;
-                }
-            }
+            GenerateScopedStatements(whileStmt.Body);
 
             // Return to the condition if the body hasn't terminated.
             if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
