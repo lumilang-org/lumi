@@ -22,14 +22,22 @@ do
 } while (token.Type != TokenType.EndOfFile);
 
 var parser = new Parser(tokens);
-var programAst = parser.ParseFunction();
+var programAst = parser.ParseProgram();
+
+foreach (var function in programAst.Functions)
+{
+    Console.WriteLine(
+        $"Parsed function: {function.Name}, " +
+        $"Parameters: {function.Parameters.Count}, " +
+        $"Return type: {function.ReturnType}");
+}
 
 var checker = new TypeChecker();
-checker.CheckFunction(programAst);
+checker.CheckProgram(programAst);
 
 Console.WriteLine("\n--- Emitting Native LLVM IR ---");
 var generator = new Codegen("LumiModule", checker.SemanticModel);
-generator.GenerateFunction(programAst);
+generator.GenerateProgram(programAst);
 
 generator.DumpModuleToConsole();
 

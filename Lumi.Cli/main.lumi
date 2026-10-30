@@ -1,21 +1,12 @@
+func getValue() -> i32 {
+    return 32
+}
+
+func doSomething() -> void {
+    return
+}
+
 func main() -> void {
-    for i32 i = 0; i < 3; i = i + 1 {
-        i32 j = 0
-
-        while j < 5 {
-            j = j + 1
-
-            if j == 2 {
-                continue
-            }
-
-            if j == 4 {
-                break
-            }
-
-            println(i * 10 + j)
-        }
-
-        println(999)
-    }
+    println(getValue())
+    doSomething()
 }

@@ -79,8 +79,6 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
         };
     }
 
-    // --- Parsing Entry Points ---
-
     public FunctionDeclarationNode ParseFunction()
     {
         Consume(TokenType.KeywordFunc);
@@ -89,7 +87,9 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
         Consume(TokenType.Identifier);
 
         Consume(TokenType.LParen);
+        var parameters = ParseFunctionParameters();
         Consume(TokenType.RParen);
+
         Consume(TokenType.Arrow);
 
         var returnType = Current.Value;
@@ -100,15 +100,69 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
         Consume(TokenType.LBrace);
 
         var body = new List<StatementNode>();
-        while (Current.Type != TokenType.RBrace && Current.Type != TokenType.EndOfFile)
+
+        while (Current.Type != TokenType.RBrace &&
+               Current.Type != TokenType.EndOfFile)
         {
-            body
-                .Add(ParseStatement());
+            body.Add(ParseStatement());
         }
 
         Consume(TokenType.RBrace);
 
-        return new FunctionDeclarationNode(funcName, returnType, body);
+        return new FunctionDeclarationNode(
+            funcName,
+            parameters,
+            returnType,
+            body);
+    }
+
+    public ProgramNode ParseProgram()
+    {
+        var functions = new List<FunctionDeclarationNode>();
+
+        while (Current.Type != TokenType.EndOfFile)
+        {
+            functions.Add(ParseFunction());
+        }
+
+        return new ProgramNode(functions);
+    }
+
+    private IReadOnlyList<FunctionParameterNode> ParseFunctionParameters()
+    {
+        var parameters = new List<FunctionParameterNode>();
+
+        // Empty parameter list.
+        if (Current.Type == TokenType.RParen)
+        {
+            return parameters;
+        }
+
+        while (true)
+        {
+            if (!IsTypeToken(Current.Type))
+            {
+                throw new Exception(
+                    $"Syntax Error: Expected parameter type, got {Current.Type} ('{Current.Value}').");
+            }
+
+            var type = Current.Value;
+            Advance();
+
+            var name = Current.Value;
+            Consume(TokenType.Identifier);
+
+            parameters.Add(new FunctionParameterNode(type, name));
+
+            if (Current.Type != TokenType.Comma)
+            {
+                break;
+            }
+
+            Consume(TokenType.Comma);
+        }
+
+        return parameters;
     }
 
     private StatementNode ParseStatement()
@@ -134,7 +188,14 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
             {
                 Consume(TokenType.KeywordReturn);
 
-                var value = ParseExpression();
+                ExpressionNode? value = null;
+
+                if (Current.Type != TokenType.RBrace &&
+                    Current.Type != TokenType.EndOfFile)
+                {
+                    value = ParseExpression();
+                }
+
                 return new ReturnStatementNode(value);
             }
             case TokenType.KeywordIf:
@@ -412,9 +473,36 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
 
     private ExpressionNode ParseIdentifier()
     {
-        var node = new IdentifierNode(Current.Value);
+        var name = Current.Value;
         Advance();
-        return node;
+
+        if (Current.Type != TokenType.LParen)
+        {
+            return new IdentifierNode(name);
+        }
+
+        Consume(TokenType.LParen);
+
+        var arguments = new List<ExpressionNode>();
+
+        if (Current.Type != TokenType.RParen)
+        {
+            while (true)
+            {
+                arguments.Add(ParseExpression());
+
+                if (Current.Type != TokenType.Comma)
+                {
+                    break;
+                }
+
+                Consume(TokenType.Comma);
+            }
+        }
+
+        Consume(TokenType.RParen);
+
+        return new FunctionCallExpressionNode(name, arguments);
     }
 
     private VariableDeclarationNode ParseVariableDeclaration()

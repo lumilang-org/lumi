@@ -11,6 +11,7 @@ public sealed class Codegen
 {
     private readonly LLVMBuilderRef _builder;
     private readonly LLVMContextRef _context;
+    private readonly Dictionary<string, (LLVMValueRef Function, LLVMTypeRef FunctionType)> _functions = new();
     private readonly LlvmTypeHelper _llvmTypeHelper;
 
     private readonly Stack<LoopTargets> _loopTargets = new();
@@ -35,17 +36,71 @@ public sealed class Codegen
         LLVMSharp.Interop.LLVM.InitializeNativeAsmParser();
     }
 
-    public void GenerateFunction(FunctionDeclarationNode funcNode)
+    public void GenerateProgram(ProgramNode program)
+    {
+        // Declare every function in the LLVM module.
+        foreach (var funcNode in program.Functions)
+        {
+            var returnType = ResolveType(funcNode.ReturnType);
+
+            var parameterTypes = funcNode.Parameters
+                .Select(parameter => ResolveType(parameter.Type))
+                .ToArray();
+
+            var functionType = LLVMTypeRef.CreateFunction(
+                returnType,
+                parameterTypes);
+
+            var function = _module.AddFunction(
+                funcNode.Name,
+                functionType);
+
+            _functions.Add(
+                funcNode.Name,
+                (function, functionType));
+        }
+
+        foreach (var funcNode in program.Functions)
+        {
+            var function = _functions[funcNode.Name].Function;
+            GenerateFunctionBody(funcNode, function);
+        }
+
+        _module.Verify(LLVMVerifierFailureAction.LLVMPrintMessageAction);
+    }
+
+    private void GenerateFunctionBody(
+        FunctionDeclarationNode funcNode,
+        LLVMValueRef function)
     {
         _currentReturnType = ResolveType(funcNode.ReturnType);
-
-        var functionType = LLVMTypeRef.CreateFunction(_currentReturnType, []);
-        var function = _module.AddFunction(funcNode.Name, functionType);
 
         var entryBlock = _context.AppendBasicBlock(function, "entry");
         _builder.PositionAtEnd(entryBlock);
 
         _currentScope.Clear();
+
+        // Register function parameters in the root scope
+        for (var i = 0; i < funcNode.Parameters.Count; i++)
+        {
+            var parameter = funcNode.Parameters[i];
+            var parameterType = ResolveType(parameter.Type);
+
+            var parameterValue = function.GetParam((uint)i);
+
+            var alloca = _builder.BuildAlloca(
+                parameterType,
+                parameter.Name);
+
+            _builder.BuildStore(parameterValue, alloca);
+
+            _currentScope.Declare(
+                parameter.Name,
+                new VariableSymbol(
+                    parameter.Type,
+                    parameterType,
+                    alloca));
+        }
 
         GenerateScopedStatements(funcNode.Body);
 
@@ -63,8 +118,6 @@ public sealed class Codegen
                     LLVMValueRef.CreateConstInt(_currentReturnType, 0));
             }
         }
-
-        _module.Verify(LLVMVerifierFailureAction.LLVMPrintMessageAction);
     }
 
     private void GenerateStatement(StatementNode statement)
@@ -98,24 +151,18 @@ public sealed class Codegen
                 GenerateExpression(exprStmt.Expression);
                 break;
 
-            case ReturnStatementNode retStmt:
-                var returnValue = GenerateExpression(retStmt.Value);
-
-                // Dynamically cast/extend/truncate to match the function's actual declared return type
-                if (returnValue.TypeOf != _currentReturnType)
+            case ReturnStatementNode returnStatement:
+            {
+                if (returnStatement.Expression is null)
                 {
-                    if (_currentReturnType.IntWidth > returnValue.TypeOf.IntWidth)
-                    {
-                        returnValue = _builder.BuildSExt(returnValue, _currentReturnType, "extended_ret");
-                    }
-                    else if (_currentReturnType.IntWidth < returnValue.TypeOf.IntWidth)
-                    {
-                        returnValue = _builder.BuildTrunc(returnValue, _currentReturnType, "truncated_ret");
-                    }
+                    _builder.BuildRetVoid();
+                    break;
                 }
 
+                var returnValue = GenerateExpression(returnStatement.Expression);
                 _builder.BuildRet(returnValue);
                 break;
+            }
 
             case PrintStatementNode printStmt:
                 var printValue = GenerateExpression(printStmt.Expression);
@@ -543,8 +590,35 @@ public sealed class Codegen
             UnaryExpressionNode unary => GenerateUnary(unary),
             LiteralNode<char> character => LLVMValueRef.CreateConstInt(_context.Int8Type, character.Value),
             LiteralNode<bool> boolean => LLVMValueRef.CreateConstInt(_context.Int1Type, (ulong)(boolean.Value ? 1 : 0)),
+            FunctionCallExpressionNode functionCall => GenerateFunctionCall(functionCall),
             _ => throw new Exception("Unknown IR generation node target.")
         };
+    }
+
+    private LLVMValueRef GenerateFunctionCall(
+        FunctionCallExpressionNode functionCall)
+    {
+        if (!_functions.TryGetValue(functionCall.Name, out var functionInfo))
+        {
+            throw new Exception(
+                $"Codegen Error: Function '{functionCall.Name}' was not declared.");
+        }
+
+        var arguments = functionCall.Arguments
+            .Select(GenerateExpression)
+            .ToArray();
+
+        var returnType = functionInfo.FunctionType.ReturnType;
+
+        var name = returnType.Kind == LLVMTypeKind.LLVMVoidTypeKind
+            ? string.Empty
+            : "calltmp";
+
+        return _builder.BuildCall2(
+            functionInfo.FunctionType,
+            functionInfo.Function,
+            arguments,
+            name);
     }
 
     private LLVMValueRef GenerateUnary(UnaryExpressionNode unary)

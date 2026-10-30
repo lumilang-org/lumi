@@ -7,17 +7,48 @@ namespace Lumi.Core.Semantics;
 
 public sealed class TypeChecker
 {
+    private readonly ReturnAnalyzer _returnAnalyzer = new();
     private int _loopDepth;
     public SemanticModel SemanticModel { get; } = new();
+    private FunctionRegistry Functions { get; } = new();
 
-    public void CheckFunction(FunctionDeclarationNode func)
+    private void CheckFunction(FunctionDeclarationNode func)
     {
-        // Create a new local scope for the function body
-        var functionScope = new SymbolTable();
+        var scope = new SymbolTable();
+
+        foreach (var parameter in func.Parameters)
+        {
+            scope.Declare(parameter.Name, parameter.Type);
+        }
 
         foreach (var statement in func.Body)
         {
-            CheckStatement(statement, functionScope, func.ReturnType);
+            CheckStatement(statement, scope, func.ReturnType);
+        }
+
+        if (func.ReturnType != TypeConst.Void &&
+            !_returnAnalyzer.AlwaysReturns(func.Body))
+        {
+            throw new Exception(
+                $"Function '{func.Name}' does not return a value on every execution path.");
+        }
+    }
+
+    public void CheckProgram(ProgramNode program)
+    {
+        foreach (var func in program.Functions)
+        {
+            var signature = new FunctionSignature(
+                func.Name,
+                func.Parameters.Select(parameter => parameter.Type).ToArray(),
+                func.ReturnType);
+
+            Functions.Register(signature);
+        }
+
+        foreach (var func in program.Functions)
+        {
+            CheckFunction(func);
         }
     }
 
@@ -54,20 +85,41 @@ public sealed class TypeChecker
 
             case ReturnStatementNode returnStatement:
             {
-                var returnType = CheckExpression(
-                    returnStatement.Value,
+                if (returnStatement.Expression is null)
+                {
+                    if (expectedReturnType != TypeConst.Void)
+                    {
+                        throw new Exception(
+                            $"Function returning '{expectedReturnType}' must return a value.");
+                    }
+
+                    break;
+                }
+
+                if (expectedReturnType == TypeConst.Void)
+                {
+                    throw new Exception(
+                        "Void functions cannot return a value.");
+                }
+
+                var expressionType = CheckExpression(
+                    returnStatement.Expression,
                     scope,
                     expectedReturnType);
 
-                if (returnType != expectedReturnType)
+                if (!CanAssign(
+                        expectedReturnType,
+                        expressionType,
+                        returnStatement.Expression))
                 {
                     throw new Exception(
-                        $"Type Mismatch: Function expects to return '{expectedReturnType}' " +
-                        $"but got '{returnType}' instead.");
+                        $"Return type mismatch: expected '{expectedReturnType}', " +
+                        $"but got '{expressionType}'.");
                 }
 
                 break;
             }
+
             case PrintStatementNode printStmt:
                 CheckExpression(printStmt.Expression, scope);
                 break;
@@ -249,6 +301,7 @@ public sealed class TypeChecker
 
             LiteralNode<char> _ => TypeConst.Char,
             LiteralNode<bool> _ => TypeConst.Bool,
+            FunctionCallExpressionNode functionCall => CheckFunctionCall(functionCall, scope),
 
             _ => throw new Exception(
                 "Unknown expression type encountered during analysis.")
@@ -256,6 +309,42 @@ public sealed class TypeChecker
 
         SemanticModel.SetExpressionType(expression, type);
         return type;
+    }
+
+    private string CheckFunctionCall(
+        FunctionCallExpressionNode functionCall,
+        SymbolTable scope)
+    {
+        var signature = Functions.Get(functionCall.Name);
+
+        if (functionCall.Arguments.Count != signature.ParameterTypes.Count)
+        {
+            throw new Exception(
+                $"Function '{functionCall.Name}' expects " +
+                $"{signature.ParameterTypes.Count} arguments, " +
+                $"but received {functionCall.Arguments.Count}.");
+        }
+
+        for (var i = 0; i < functionCall.Arguments.Count; i++)
+        {
+            var argument = functionCall.Arguments[i];
+            var expectedType = signature.ParameterTypes[i];
+
+            var actualType = CheckExpression(
+                argument,
+                scope,
+                expectedType);
+
+            if (!CanAssign(expectedType, actualType, argument))
+            {
+                throw new Exception(
+                    $"Type Mismatch: Argument {i + 1} of function " +
+                    $"'{functionCall.Name}' expects '{expectedType}', " +
+                    $"but got '{actualType}'.");
+            }
+        }
+
+        return signature.ReturnType;
     }
 
     private string CheckUnaryExpression(

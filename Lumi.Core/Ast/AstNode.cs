@@ -49,9 +49,14 @@ public sealed class VariableDeclarationNode(string type, string name, Expression
     public ExpressionNode Initializer { get; } = initializer;
 }
 
-public sealed class FunctionDeclarationNode(string name, string returnType, List<StatementNode> body) : ASTNode
+public sealed class FunctionDeclarationNode(
+    string name,
+    IReadOnlyList<FunctionParameterNode> parameters,
+    string returnType,
+    List<StatementNode> body) : ASTNode
 {
     public string Name { get; } = name;
+    public IReadOnlyList<FunctionParameterNode> Parameters { get; } = parameters;
     public string ReturnType { get; } = returnType;
     public List<StatementNode> Body { get; } = body;
 }
@@ -61,9 +66,9 @@ public sealed class ExpressionStatementNode(ExpressionNode expression) : Stateme
     public ExpressionNode Expression { get; } = expression;
 }
 
-public sealed class ReturnStatementNode(ExpressionNode value) : StatementNode
+public sealed class ReturnStatementNode(ExpressionNode? expression) : StatementNode
 {
-    public ExpressionNode Value { get; } = value;
+    public ExpressionNode? Expression { get; } = expression;
 }
 
 public abstract class LiteralNode : ExpressionNode;
@@ -116,4 +121,26 @@ public sealed class ForStatementNode(
     public ExpressionNode? Condition { get; } = condition;
     public StatementNode? Update { get; } = update;
     public IReadOnlyList<StatementNode> Body { get; } = body;
+}
+
+public sealed class FunctionParameterNode(
+    string type,
+    string name) : ASTNode
+{
+    public string Type { get; } = type;
+    public string Name { get; } = name;
+}
+
+public sealed class ProgramNode(
+    IReadOnlyList<FunctionDeclarationNode> functions) : ASTNode
+{
+    public IReadOnlyList<FunctionDeclarationNode> Functions { get; } = functions;
+}
+
+public sealed class FunctionCallExpressionNode(
+    string name,
+    IReadOnlyList<ExpressionNode> arguments) : ExpressionNode
+{
+    public string Name { get; } = name;
+    public IReadOnlyList<ExpressionNode> Arguments { get; } = arguments;
 }
