@@ -1,30 +1,38 @@
+using Lumi.Core.Syntax;
+
 namespace Lumi.Core.Semantics;
 
 public sealed class SymbolTable(SymbolTable? parent = null)
 {
-    private readonly Dictionary<string, string> _symbols = new();
     private readonly SymbolTable? _parent = parent;
+    private readonly Dictionary<string, string> _symbols = new();
 
-    public void Declare(string name, string type)
+    /// <summary>
+    ///     Declares a variable in the current scope.
+    ///     Returns false if the variable is already declared in this scope.
+    /// </summary>
+    public bool TryDeclare(string name, string type)
     {
-        if (!_symbols.TryAdd(name, type))
-        {
-            throw new Exception($"Semantic Error: Variable '{name}' is already declared in this scope.");
-        }
+        return _symbols.TryAdd(name, type);
     }
-    
-    public string Lookup(string name)
+
+    /// <summary>
+    ///     Looks up a variable in the current scope and its parent scopes.
+    ///     Returns false if the variable does not exist.
+    /// </summary>
+    public bool TryLookup(string name, out string type)
     {
-        if (_symbols.TryGetValue(name, out var type))
+        if (_symbols.TryGetValue(name, out type!))
         {
-            return type;
+            return true;
         }
 
-        if (_parent != null)
+        if (_parent is not null)
         {
-            return _parent.Lookup(name);
+            return _parent.TryLookup(name, out type);
         }
 
-        throw new Exception($"Semantic Error: Variable '{name}' does not exist in the current context.");
+        type = TypeConst.Error;
+        return false;
     }
 }

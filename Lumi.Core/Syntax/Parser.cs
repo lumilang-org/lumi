@@ -4,7 +4,7 @@ using Lumi.Core.Diagnostics;
 
 namespace Lumi.Core.Syntax;
 
-public sealed class Parser(IReadOnlyList<Token> tokens)
+public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostics)
 {
     private int _position;
 
@@ -35,8 +35,11 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
     {
         if (Current.Type != type)
         {
-            throw new Exception(
-                $"Syntax Error: Expected token {type}, got {Current.Type} ('{Current.Value}') at position {_position}");
+            Report(
+                DiagnosticCodes.ExpectedToken,
+                $"Syntax Error: Expected token {type}, got {Current.Type} ('{Current.Value}') at position {_position}",
+                Current.Span);
+            throw new ParseException();
         }
 
         var token = Current;
@@ -123,13 +126,31 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
             span);
     }
 
+
     public ProgramNode ParseProgram()
     {
         var functions = new List<FunctionDeclarationNode>();
 
         while (Current.Type != TokenType.EndOfFile)
         {
-            functions.Add(ParseFunction());
+            var previousPosition = _position;
+
+            try
+            {
+                functions.Add(ParseFunction());
+            }
+            catch (ParseException)
+            {
+                SynchronizeTopLevel();
+            }
+
+            // Ensure we always make progress.
+            // Prevents an infinite loop if recovery didn't advance.
+            if (_position == previousPosition &&
+                Current.Type != TokenType.EndOfFile)
+            {
+                Advance();
+            }
         }
 
         var span = functions.Count > 0
@@ -140,6 +161,16 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
 
         return new ProgramNode(functions, span);
     }
+
+    private void SynchronizeTopLevel()
+    {
+        while (Current.Type != TokenType.EndOfFile &&
+               Current.Type != TokenType.KeywordFunc)
+        {
+            Advance();
+        }
+    }
+
 
     private IReadOnlyList<FunctionParameterNode> ParseFunctionParameters()
     {
@@ -154,8 +185,11 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
         {
             if (!IsTypeToken(Current.Type))
             {
-                throw new Exception(
-                    $"Syntax Error: Expected parameter type, got {Current.Type} ('{Current.Value}').");
+                Report(
+                    DiagnosticCodes.ExpectedParameterType,
+                    $"Syntax Error: Expected parameter type, got {Current.Type} ('{Current.Value}').",
+                    Current.Span);
+                throw new ParseException();
             }
 
             var typeToken = Current;
@@ -246,8 +280,11 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
 
                 if (Current.Type == TokenType.RParen)
                 {
-                    throw new Exception(
-                        $"{Current.Value}: expected an expression inside {functionName}.");
+                    Report(
+                        DiagnosticCodes.EmptyPrintExpression,
+                        $"{Current.Value}: expected an expression inside {functionName}.",
+                        Current.Span);
+                    throw new ParseException();
                 }
 
                 var expression = ParseExpression();
@@ -439,20 +476,31 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
 
     private ExpressionNode ParsePrefix()
     {
-        return Current.Type switch
+        switch (Current.Type)
         {
-            TokenType.Number => ParseNumberLiteral(),
-            TokenType.Identifier => ParseIdentifier(),
-            TokenType.Character => ParseCharLiteral(),
-            TokenType.BooleanLiteral => ParseBooleanLiteral(),
-            TokenType.LParen => ParseGroupedExpression(),
-            TokenType.LogicalNot or
-                TokenType.BitwiseNot or
-                TokenType.LeftShift or
-                TokenType.RightShift or
-                TokenType.Minus => ParseUnaryExpression(),
-            _ => throw new Exception($"Syntax Error: Unexpected prefix token {Current.Type}")
-        };
+            case TokenType.Number:
+                return ParseNumberLiteral();
+            case TokenType.Identifier:
+                return ParseIdentifier();
+            case TokenType.Character:
+                return ParseCharLiteral();
+            case TokenType.BooleanLiteral:
+                return ParseBooleanLiteral();
+            case TokenType.LParen:
+                return ParseGroupedExpression();
+            case TokenType.LogicalNot:
+            case TokenType.BitwiseNot:
+            case TokenType.LeftShift:
+            case TokenType.RightShift:
+            case TokenType.Minus:
+                return ParseUnaryExpression();
+            default:
+                Report(
+                    DiagnosticCodes.UnexpectedToken,
+                    $"Syntax Error: Unexpected prefix token {Current.Type}",
+                    Current.Span);
+                throw new ParseException();
+        }
     }
 
     private ExpressionNode ParseGroupedExpression()
@@ -535,8 +583,11 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
                     CultureInfo.InvariantCulture,
                     out var decimalValue))
             {
-                throw new Exception(
-                    $"Syntax Error: Invalid decimal literal '{value}'");
+                Report(
+                    DiagnosticCodes.InvalidLiteral,
+                    $"Syntax Error: Invalid decimal literal '{value}'",
+                    token.Span);
+                throw new ParseException();
             }
 
             return new LiteralNode<double>(
@@ -634,8 +685,15 @@ public sealed class Parser(IReadOnlyList<Token> tokens)
         return new SourceSpan(start, end);
     }
 
-    private SourceSpan CreateSpan(SourceSpan start, SourceSpan end)
+    private void Report(string code, string message, SourceSpan? span)
     {
-        return CreateSpan(start.Start, end.End);
+        diagnostics.Report(
+            new Diagnostic(
+                code,
+                DiagnosticSeverity.Error,
+                message,
+                span));
     }
+
+    private sealed class ParseException : Exception;
 }

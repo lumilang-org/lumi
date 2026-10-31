@@ -4,24 +4,14 @@ public sealed class FunctionRegistry
 {
     private readonly Dictionary<string, FunctionSignature> _functions = [];
 
-    public void Register(FunctionSignature signature)
+    public bool TryRegister(FunctionSignature signature)
     {
-        if (!_functions.TryAdd(signature.Name, signature))
-        {
-            throw new Exception(
-                $"Function '{signature.Name}' is already declared.");
-        }
+        return _functions.TryAdd(signature.Name, signature);
     }
 
-    public FunctionSignature Get(string name)
+    public bool TryGet(string name, out FunctionSignature signature)
     {
-        if (!_functions.TryGetValue(name, out var signature))
-        {
-            throw new Exception(
-                $"Function '{name}' is not declared.");
-        }
-
-        return signature;
+        return _functions.TryGetValue(name, out signature!);
     }
 
     public bool Contains(string name)

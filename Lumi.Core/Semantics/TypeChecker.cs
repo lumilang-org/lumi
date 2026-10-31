@@ -1,11 +1,12 @@
 using System.Globalization;
 using System.Numerics;
 using Lumi.Core.Ast;
+using Lumi.Core.Diagnostics;
 using Lumi.Core.Syntax;
 
 namespace Lumi.Core.Semantics;
 
-public sealed class TypeChecker
+public sealed class TypeChecker(DiagnosticBag diagnostic)
 {
     private readonly ReturnAnalyzer _returnAnalyzer = new();
     private int _loopDepth;
@@ -18,7 +19,13 @@ public sealed class TypeChecker
 
         foreach (var parameter in func.Parameters)
         {
-            scope.Declare(parameter.Name, parameter.Type);
+            if (!scope.TryDeclare(parameter.Name, parameter.Type))
+            {
+                Report(
+                    DiagnosticCodes.DuplicateVariable,
+                    $"Variable '{parameter.Name}' is already declared in this scope.",
+                    parameter.Span);
+            }
         }
 
         foreach (var statement in func.Body)
@@ -29,8 +36,9 @@ public sealed class TypeChecker
         if (func.ReturnType != TypeConst.Void &&
             !_returnAnalyzer.AlwaysReturns(func.Body))
         {
-            throw new Exception(
-                $"Function '{func.Name}' does not return a value on every execution path.");
+            Report(DiagnosticCodes.MissingReturn,
+                $"Function '{func.Name}' does not return a value on every execution path.",
+                func.Span);
         }
     }
 
@@ -43,7 +51,12 @@ public sealed class TypeChecker
                 func.Parameters.Select(parameter => parameter.Type).ToArray(),
                 func.ReturnType);
 
-            Functions.Register(signature);
+            if (!Functions.TryRegister(signature))
+            {
+                Report(DiagnosticCodes.DuplicateFunction,
+                    $"Function '{func.Name}' is already declared.",
+                    func.Span);
+            }
         }
 
         foreach (var func in program.Functions)
@@ -70,18 +83,26 @@ public sealed class TypeChecker
                 if (varDecl.Type.StartsWith('u') &&
                     varDecl.Initializer is UnaryExpressionNode { Operator: "-" })
                 {
-                    throw new Exception(
-                        $"Type Mismatch: Cannot assign a negative value to unsigned type '{varDecl.Type}'.");
+                    Report(DiagnosticCodes.TypeMismatch,
+                        $"Cannot assign a negative value to unsigned type '{varDecl.Type}'.",
+                        varDecl.Initializer.Span);
                 }
 
                 if (!CanAssign(varDecl.Type, initializerType, varDecl.Initializer))
                 {
-                    throw new Exception(
-                        $"Type Mismatch: Cannot assign type '{initializerType}' " +
-                        $"to a variable of type '{varDecl.Type}'");
+                    Report(DiagnosticCodes.TypeMismatch,
+                        $"Cannot assign type '{initializerType}' to a variable of type '{varDecl.Type}'.",
+                        varDecl.Initializer.Span);
                 }
 
-                scope.Declare(varDecl.Name, varDecl.Type);
+                if (!scope.TryDeclare(varDecl.Name, varDecl.Type))
+                {
+                    Report(
+                        DiagnosticCodes.DuplicateVariable,
+                        $"Variable '{varDecl.Name}' is already declared in this scope.",
+                        varDecl.Span);
+                }
+
                 break;
 
             case ExpressionStatementNode exprStmt:
@@ -94,8 +115,9 @@ public sealed class TypeChecker
                 {
                     if (expectedReturnType != TypeConst.Void)
                     {
-                        throw new Exception(
-                            $"Function returning '{expectedReturnType}' must return a value.");
+                        Report(DiagnosticCodes.MissingReturn,
+                            $"Function returning '{expectedReturnType}' must return a value.",
+                            returnStatement.Span);
                     }
 
                     break;
@@ -103,8 +125,12 @@ public sealed class TypeChecker
 
                 if (expectedReturnType == TypeConst.Void)
                 {
-                    throw new Exception(
-                        "Void functions cannot return a value.");
+                    Report(DiagnosticCodes.InvalidReturn,
+                        "Void functions cannot return a value.",
+                        returnStatement.Span);
+
+                    CheckExpression(returnStatement.Expression, scope);
+                    break;
                 }
 
                 var expressionType = CheckExpression(
@@ -112,14 +138,18 @@ public sealed class TypeChecker
                     scope,
                     expectedReturnType);
 
-                if (!CanAssign(
+                EnsureValueExpression(returnStatement.Expression, expressionType);
+
+                if (expressionType != TypeConst.Error &&
+                    !CanAssign(
                         expectedReturnType,
                         expressionType,
                         returnStatement.Expression))
                 {
-                    throw new Exception(
+                    Report(DiagnosticCodes.TypeMismatch,
                         $"Return type mismatch: expected '{expectedReturnType}', " +
-                        $"but got '{expressionType}'.");
+                        $"but got '{expressionType}'.",
+                        returnStatement.Expression.Span);
                 }
 
                 break;
@@ -133,10 +163,11 @@ public sealed class TypeChecker
             {
                 var conditionType = CheckExpression(ifStatement.Condition, scope);
 
-                if (conditionType != TypeConst.Bool)
+                if (conditionType != TypeConst.Bool && conditionType != TypeConst.Error)
                 {
-                    throw new Exception(
-                        $"Type Mismatch: An if condition must be 'bool', but got '{conditionType}'.");
+                    Report(DiagnosticCodes.InvalidCondition,
+                        $"Type Mismatch: An if condition must be 'bool', but got '{conditionType}'.",
+                        ifStatement.Condition.Span);
                 }
 
                 var thenScope = new SymbolTable(scope);
@@ -162,10 +193,11 @@ public sealed class TypeChecker
             {
                 var conditionType = CheckExpression(whileStatement.Condition, scope);
 
-                if (conditionType != TypeConst.Bool)
+                if (conditionType != TypeConst.Bool && conditionType != TypeConst.Error)
                 {
-                    throw new Exception(
-                        $"Type Mismatch: A while condition must be 'bool', but got '{conditionType}'.");
+                    Report(DiagnosticCodes.InvalidCondition,
+                        $"Type Mismatch: A while condition must be 'bool', but got '{conditionType}'.",
+                        whileStatement.Condition.Span);
                 }
 
                 var bodyScope = new SymbolTable(scope);
@@ -186,31 +218,49 @@ public sealed class TypeChecker
 
                 break;
             }
-            case BreakStatementNode:
+            case BreakStatementNode breakStmt:
                 if (_loopDepth == 0)
                 {
-                    throw new Exception("'break' can only be used inside a loop.");
+                    Report(DiagnosticCodes.BreakOutsideLoop, "'break' can only be used inside a loop.", breakStmt.Span);
                 }
 
                 break;
 
-            case ContinueStatementNode:
+            case ContinueStatementNode continueStatement:
                 if (_loopDepth == 0)
                 {
-                    throw new Exception("'continue' can only be used inside a loop.");
+                    Report(DiagnosticCodes.ContinueOutsideLoop, "'continue' can only be used inside a loop.",
+                        continueStatement.Span);
                 }
 
                 break;
             case AssignmentStatementNode assignment:
             {
-                var variableType = scope.Lookup(assignment.Name);
-                var valueType = CheckExpression(assignment.Value, scope, variableType);
-
-                if (!CanAssign(variableType, valueType, assignment.Value))
+                if (!scope.TryLookup(assignment.Name, out var variableType))
                 {
-                    throw new Exception(
-                        $"Type Mismatch: Cannot assign '{valueType}' to variable " +
-                        $"'{assignment.Name}' of type '{variableType}'.");
+                    Report(DiagnosticCodes.UndefinedVariable,
+                        $"Undefined variable '{assignment.Name}'.",
+                        assignment.Span);
+
+                    // Still check the right-hand side for other diagnostics.
+                    CheckExpression(assignment.Value, scope);
+                    break;
+                }
+
+                var valueType = CheckExpression(
+                    assignment.Value,
+                    scope,
+                    variableType);
+
+                EnsureValueExpression(assignment.Value, valueType);
+
+                if (valueType != TypeConst.Error &&
+                    !CanAssign(variableType, valueType, assignment.Value))
+                {
+                    Report(DiagnosticCodes.TypeMismatch,
+                        $"Cannot assign '{valueType}' to variable " +
+                        $"'{assignment.Name}' of type '{variableType}'.",
+                        assignment.Value.Span);
                 }
 
                 break;
@@ -236,10 +286,11 @@ public sealed class TypeChecker
                         forStatement.Condition,
                         forScope);
 
-                    if (conditionType != TypeConst.Bool)
+                    if (conditionType != TypeConst.Bool && conditionType != TypeConst.Error)
                     {
-                        throw new Exception(
-                            $"Type Mismatch: A for condition must be 'bool', but got '{conditionType}'.");
+                        Report(DiagnosticCodes.InvalidCondition,
+                            $"Type Mismatch: A for condition must be 'bool', but got '{conditionType}'.",
+                            forStatement.Condition.Span);
                     }
                 }
 
@@ -295,8 +346,7 @@ public sealed class TypeChecker
                     ? expectedType
                     : InferBoundsUtils.InferFloating(node),
 
-            IdentifierNode id =>
-                scope.Lookup(id.Name),
+            IdentifierNode id => CheckIdentifier(id, scope),
 
             BinaryExpressionNode binary =>
                 CheckBinaryExpression(binary, scope, expectedType),
@@ -316,18 +366,48 @@ public sealed class TypeChecker
         return type;
     }
 
+    private string CheckIdentifier(IdentifierNode identifier, SymbolTable scope)
+    {
+        if (scope.TryLookup(identifier.Name, out var type))
+        {
+            return type;
+        }
+
+        Report(DiagnosticCodes.UndefinedVariable,
+            $"Undefined variable '{identifier.Name}'.",
+            identifier.Span);
+
+        return TypeConst.Error;
+    }
+
     private string CheckFunctionCall(
         FunctionCallExpressionNode functionCall,
         SymbolTable scope)
     {
-        var signature = Functions.Get(functionCall.Name);
+        if (!Functions.TryGet(functionCall.Name, out var signature))
+        {
+            Report(DiagnosticCodes.UndefinedFunction,
+                $"Function '{functionCall.Name}' is not declared.",
+                functionCall.Span);
+
+            // Still inspect the arguments for additional diagnostics.
+            foreach (var argument in functionCall.Arguments)
+            {
+                CheckExpression(argument, scope);
+            }
+
+            return TypeConst.Error;
+        }
 
         if (functionCall.Arguments.Count != signature.ParameterTypes.Count)
         {
-            throw new Exception(
-                $"Function '{functionCall.Name}' expects " +
-                $"{signature.ParameterTypes.Count} arguments, " +
-                $"but received {functionCall.Arguments.Count}.");
+            var errorMessage = $"Function '{functionCall.Name}' expects " +
+                               $"{signature.ParameterTypes.Count} arguments, " +
+                               $"but received {functionCall.Arguments.Count}.";
+
+            Report(DiagnosticCodes.ArgumentCountMismatch,
+                errorMessage,
+                functionCall.Span);
         }
 
         for (var i = 0; i < functionCall.Arguments.Count; i++)
@@ -342,24 +422,28 @@ public sealed class TypeChecker
 
             if (!CanAssign(expectedType, actualType, argument))
             {
-                throw new Exception(
-                    $"Type Mismatch: Argument {i + 1} of function " +
-                    $"'{functionCall.Name}' expects '{expectedType}', " +
-                    $"but got '{actualType}'.");
+                var errorMessage = $"Type Mismatch: Argument {i + 1} of function " +
+                                   $"'{functionCall.Name}' expects '{expectedType}', " +
+                                   $"but got '{actualType}'.";
+
+                Report(DiagnosticCodes.TypeMismatch,
+                    errorMessage,
+                    functionCall.Span);
             }
         }
 
         return signature.ReturnType;
     }
 
-    private static void EnsureValueExpression(
+    private void EnsureValueExpression(
         ExpressionNode expression,
         string expressionType)
     {
         if (expressionType == TypeConst.Void)
         {
-            throw new Exception(
-                "Semantic Error: A void expression cannot be used where a value is required.");
+            Report(DiagnosticCodes.VoidExpression,
+                "Semantic Error: A void expression cannot be used where a value is required.",
+                expression.Span);
         }
     }
 
@@ -375,22 +459,42 @@ public sealed class TypeChecker
                                  || IsFloatingPointType(operandType)
                 => operandType,
 
-            TypeConst.Minus => throw new Exception(
-                $"Type Mismatch: Unary '-' cannot be applied to type '{operandType}'."),
+            TypeConst.Minus when operandType == TypeConst.Error => TypeConst.Error,
+
+            TypeConst.Minus => ReportErrorAndReturn(
+                DiagnosticCodes.TypeMismatch,
+                $"Type Mismatch: Unary '-' cannot be applied to type '{operandType}'.",
+                unary.Span),
 
             "!" when operandType == TypeConst.Bool => TypeConst.Bool,
 
-            "!" => throw new Exception(
-                $"Type Error: Logical NOT requires 'bool', but got '{operandType}'."),
+            "!" when operandType == TypeConst.Error => TypeConst.Error,
+
+            "!" => ReportErrorAndReturn(
+                DiagnosticCodes.TypeMismatch,
+                $"Type Error: Logical NOT requires 'bool', but got '{operandType}'.",
+                unary.Span),
 
             "~" when TypePromoter.IsIntegerType(operandType) => operandType,
 
-            "~" => throw new Exception(
-                $"Type Error: Bitwise NOT requires an integer operand, but got '{operandType}'."),
+            "~" when operandType == TypeConst.Error => TypeConst.Error,
 
-            _ => throw new Exception(
-                $"Unsupported unary operator: '{unary.Operator}'.")
+            "~" => ReportErrorAndReturn(
+                DiagnosticCodes.TypeMismatch,
+                $"Type Error: Bitwise NOT requires an integer operand, but got '{operandType}'.",
+                unary.Span),
+
+            _ => ReportErrorAndReturn(
+                DiagnosticCodes.InvalidOperator,
+                $"Unsupported unary operator: '{unary.Operator}'.",
+                unary.Span)
         };
+    }
+
+    private string ReportErrorAndReturn(string code, string message, SourceSpan? span)
+    {
+        Report(code, message, span);
+        return TypeConst.Error;
     }
 
     private static bool IsSignedIntegerType(string type)
@@ -428,23 +532,30 @@ public sealed class TypeChecker
                 expectedType);
         }
 
+        if (leftType == TypeConst.Error || rightType == TypeConst.Error)
+        {
+            return TypeConst.Error;
+        }
+
         if (IsBitwiseOperator(binary.Operator))
         {
             if (!TypePromoter.IsIntegerType(leftType)
                 || !TypePromoter.IsIntegerType(rightType))
             {
-                throw new Exception(
+                return ReportErrorAndReturn(DiagnosticCodes.TypeMismatch,
                     $"Type Mismatch: Operator '{binary.Operator}' " +
-                    $"requires integer operands, got '{leftType}' and '{rightType}'.");
+                    $"requires integer operands, got '{leftType}' and '{rightType}'.",
+                    binary.Span);
             }
 
             var commonType = TypePromoter.GetCommonType(leftType, rightType);
 
             if (commonType is null)
             {
-                throw new Exception(
+                return ReportErrorAndReturn(DiagnosticCodes.TypeMismatch,
                     $"Type Mismatch: Operator '{binary.Operator}' " +
-                    $"cannot be applied to types '{leftType}' and '{rightType}'.");
+                    $"cannot be applied to types '{leftType}' and '{rightType}'.",
+                    binary.Span);
             }
 
             return commonType;
@@ -455,28 +566,31 @@ public sealed class TypeChecker
             if (!TypePromoter.IsIntegerType(leftType)
                 || !TypePromoter.IsIntegerType(rightType))
             {
-                throw new Exception(
+                return ReportErrorAndReturn(DiagnosticCodes.TypeMismatch,
                     $"Type Mismatch: Operator '{binary.Operator}' " +
-                    $"requires integer operands, got '{leftType}' and '{rightType}'.");
+                    $"requires integer operands, got '{leftType}' and '{rightType}'.",
+                    binary.Span);
             }
 
             if (TryGetIntegerConstant(binary.Right, out var shiftAmount))
             {
                 if (shiftAmount < BigInteger.Zero)
                 {
-                    throw new Exception(
+                    Report(DiagnosticCodes.InvalidShiftAmount,
                         $"Invalid shift amount: '{shiftAmount}'. " +
-                        "Shift amounts cannot be negative.");
+                        "Shift amounts cannot be negative.",
+                        binary.Right.Span);
                 }
 
                 var bitWidth = GetIntegerBitWidth(leftType);
 
                 if (shiftAmount >= bitWidth)
                 {
-                    throw new Exception(
+                    Report(DiagnosticCodes.InvalidShiftAmount,
                         $"Invalid shift amount: '{shiftAmount}'. " +
                         $"Type '{leftType}' has a bit width of {bitWidth}, " +
-                        $"so the shift amount must be between 0 and {bitWidth - 1}.");
+                        $"so the shift amount must be between 0 and {bitWidth - 1}.",
+                        binary.Right.Span);
                 }
             }
 
@@ -495,16 +609,18 @@ public sealed class TypeChecker
         {
             if (leftType != TypeConst.Bool || rightType != TypeConst.Bool)
             {
-                throw new Exception(
+                return ReportErrorAndReturn(DiagnosticCodes.TypeMismatch,
                     $"Type Mismatch: Operator '{binary.Operator}' " +
-                    $"requires boolean operands, got '{leftType}' and '{rightType}'.");
+                    $"requires boolean operands, got '{leftType}' and '{rightType}'.",
+                    binary.Span);
             }
 
             return TypeConst.Bool;
         }
 
-        throw new Exception(
-            $"Unsupported binary operator: '{binary.Operator}'.");
+        return ReportErrorAndReturn(DiagnosticCodes.InvalidOperator,
+            $"Unsupported binary operator: '{binary.Operator}'.",
+            binary.Span);
     }
 
     public static bool IsShiftOperator(string op)
@@ -572,11 +688,17 @@ public sealed class TypeChecker
         string rightType,
         string? expectedType = null)
     {
+        if (leftType == TypeConst.Error || rightType == TypeConst.Error)
+        {
+            return TypeConst.Error;
+        }
+
         if (!IsNumericType(leftType) || !IsNumericType(rightType))
         {
-            throw new Exception(
+            return ReportErrorAndReturn(DiagnosticCodes.TypeMismatch,
                 $"Type Mismatch: Operator '{binary.Operator}' " +
-                $"requires numeric operands, got '{leftType}' and '{rightType}'.");
+                $"requires numeric operands, got '{leftType}' and '{rightType}'.",
+                binary.Span);
         }
 
         if (expectedType is not null &&
@@ -592,9 +714,10 @@ public sealed class TypeChecker
         {
             if (leftType != rightType)
             {
-                throw new Exception(
+                return ReportErrorAndReturn(DiagnosticCodes.TypeMismatch,
                     $"Type Mismatch: Operator '{binary.Operator}' " +
-                    $"cannot be applied to types '{leftType}' and '{rightType}'.");
+                    $"cannot be applied to types '{leftType}' and '{rightType}'.",
+                    binary.Span);
             }
 
             return leftType;
@@ -604,9 +727,10 @@ public sealed class TypeChecker
 
         if (commonType is null)
         {
-            throw new Exception(
+            return ReportErrorAndReturn(DiagnosticCodes.TypeMismatch,
                 $"Type Mismatch: Operator '{binary.Operator}' " +
-                $"cannot be applied to types '{leftType}' and '{rightType}'.");
+                $"cannot be applied to types '{leftType}' and '{rightType}'.",
+                binary.Span);
         }
 
         return commonType;
@@ -620,11 +744,23 @@ public sealed class TypeChecker
         var isEquality = binary.Operator is
             TypeConst.EqualsEquals or TypeConst.BangEquals;
 
+        if (leftType == TypeConst.Error || rightType == TypeConst.Error)
+        {
+            return TypeConst.Bool;
+        }
+
         // Integer operands may have different widths if they can be promoted.
         if (TypePromoter.IsIntegerType(leftType) &&
             TypePromoter.IsIntegerType(rightType))
         {
-            EnsureCompatibleNumericTypes(binary, leftType, rightType);
+            if (TypePromoter.GetCommonType(leftType, rightType) is null)
+            {
+                Report(DiagnosticCodes.TypeMismatch,
+                    $"Type Mismatch: Operator '{binary.Operator}' " +
+                    $"cannot compare types '{leftType}' and '{rightType}'.",
+                    binary.Span);
+            }
+
             return TypeConst.Bool;
         }
 
@@ -634,7 +770,10 @@ public sealed class TypeChecker
         {
             if (leftType != rightType)
             {
-                throw CreateComparisonTypeMismatch(binary, leftType, rightType);
+                Report(DiagnosticCodes.TypeMismatch,
+                    $"Type Mismatch: Operator '{binary.Operator}' " +
+                    $"cannot compare types '{leftType}' and '{rightType}'.",
+                    binary.Span);
             }
 
             return TypeConst.Bool;
@@ -642,7 +781,11 @@ public sealed class TypeChecker
 
         if (leftType != rightType)
         {
-            throw CreateComparisonTypeMismatch(binary, leftType, rightType);
+            Report(DiagnosticCodes.TypeMismatch,
+                $"Type Mismatch: Operator '{binary.Operator}' " +
+                $"cannot compare types '{leftType}' and '{rightType}'.",
+                binary.Span);
+            return TypeConst.Bool;
         }
 
         if (leftType == TypeConst.Bool && isEquality)
@@ -657,35 +800,19 @@ public sealed class TypeChecker
 
         if (leftType == TypeConst.Char || leftType == TypeConst.Bool)
         {
-            throw new Exception(
+            Report(DiagnosticCodes.TypeMismatch,
                 $"Type Mismatch: Operator '{binary.Operator}' " +
-                $"does not support ordering comparisons on '{leftType}'.");
+                $"does not support ordering comparisons on '{leftType}'.",
+                binary.Span);
+            return TypeConst.Bool;
         }
 
-        throw new Exception(
+        Report(DiagnosticCodes.TypeMismatch,
             $"Type Mismatch: Operator '{binary.Operator}' " +
-            $"cannot compare values of type '{leftType}'.");
-    }
+            $"cannot compare values of type '{leftType}'.",
+            binary.Span);
 
-    private void EnsureCompatibleNumericTypes(
-        BinaryExpressionNode binary,
-        string leftType,
-        string rightType)
-    {
-        if (TypePromoter.GetCommonType(leftType, rightType) is null)
-        {
-            throw CreateComparisonTypeMismatch(binary, leftType, rightType);
-        }
-    }
-
-    private static Exception CreateComparisonTypeMismatch(
-        BinaryExpressionNode binary,
-        string leftType,
-        string rightType)
-    {
-        return new Exception(
-            $"Type Mismatch: Operator '{binary.Operator}' " +
-            $"cannot compare types '{leftType}' and '{rightType}'.");
+        return TypeConst.Bool;
     }
 
     private static bool IsArithmeticOperator(string op)
@@ -824,5 +951,17 @@ public sealed class TypeChecker
     public static bool IsUnsignedInteger(string typeName)
     {
         return typeName.StartsWith('u');
+    }
+
+    private void Report(
+        string code,
+        string message,
+        SourceSpan? span)
+    {
+        diagnostic.Report(new Diagnostic(
+            code,
+            DiagnosticSeverity.Error,
+            message,
+            span));
     }
 }

@@ -1,7 +1,19 @@
-func doSomething() -> void {
-    return
+func first() -> void {
+    println(10)
 }
 
-func main() -> void {
-    i32 value = -doSomething()
+func broken() -> void {
+    println('a')
+}
+
+func third() -> void {
+    println(30)
+}
+
+func main() -> i32 {
+    first()
+    broken()
+    third()
+
+    return 1
 }

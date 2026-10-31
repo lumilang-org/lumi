@@ -9,6 +9,14 @@ public static class DiagnosticCodes
     public const string UndefinedFunction = "LUMI1004";
     public const string ArgumentCountMismatch = "LUMI1005";
 
+    // Parser errors
+    public const string UnexpectedToken = "LUMI4001";
+    public const string ExpectedToken = "LUMI4002";
+    public const string ExpectedExpression = "LUMI4003";
+    public const string InvalidLiteral = "LUMI4004";
+    public const string ExpectedParameterType = "LUMI4005";
+    public const string EmptyPrintExpression = "LUMI4006";
+
     // Function validation
     public const string MissingReturn = "LUMI2001";
     public const string InvalidReturn = "LUMI2002";
@@ -16,4 +24,10 @@ public static class DiagnosticCodes
     // Control flow
     public const string BreakOutsideLoop = "LUMI3001";
     public const string ContinueOutsideLoop = "LUMI3002";
+
+    public const string DuplicateFunction = "LUMI1006";
+    public const string DuplicateVariable = "LUMI1007";
+    public const string InvalidCondition = "LUMI1008";
+    public const string InvalidOperator = "LUMI1009";
+    public const string InvalidShiftAmount = "LUMI1010";
 }
