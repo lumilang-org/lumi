@@ -17,10 +17,12 @@ public enum TokenType
     TypeBool,
     TypeVoid,
     TypeChar,
+    TypeI8,
     TypeI16,
     TypeI32,
     TypeI64,
 
+    TypeU8,
     TypeU16,
     TypeU32,
     TypeU64,

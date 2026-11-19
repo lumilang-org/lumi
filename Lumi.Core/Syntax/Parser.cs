@@ -345,9 +345,11 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         switch (Current.Type)
         {
             case
+                TokenType.TypeI8 or
                 TokenType.TypeI16 or
                 TokenType.TypeI32 or
                 TokenType.TypeI64 or
+                TokenType.TypeU8 or
                 TokenType.TypeU16 or
                 TokenType.TypeU32 or
                 TokenType.TypeU64 or
@@ -514,9 +516,11 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
     private static bool IsTypeToken(TokenType type)
     {
         return type is
+            TokenType.TypeI8 or
             TokenType.TypeI16 or
             TokenType.TypeI32 or
             TokenType.TypeI64 or
+            TokenType.TypeU8 or
             TokenType.TypeU16 or
             TokenType.TypeU32 or
             TokenType.TypeU64 or
