@@ -13,6 +13,7 @@
 *.user
 *.userosscache
 *.sln.docstates
+.DS_Store
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
@@ -407,6 +408,8 @@ obj/
 # Common node modules locations
 /node_modules
 /wwwroot/node_modules
+
+main.lumi
 
 ### Rider ###
 # Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, Android Studio, WebStorm and Rider
