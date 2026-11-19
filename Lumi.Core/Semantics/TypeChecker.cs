@@ -9,6 +9,7 @@ namespace Lumi.Core.Semantics;
 public sealed class TypeChecker(DiagnosticBag diagnostic)
 {
     private readonly ReturnAnalyzer _returnAnalyzer = new();
+    private readonly Dictionary<string, StructDeclarationNode> _structs = new();
     private int _loopDepth;
     public SemanticModel SemanticModel { get; } = new();
     private FunctionRegistry Functions { get; } = new();
@@ -44,6 +45,18 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
     public void CheckProgram(ProgramNode program)
     {
+        _structs.Clear();
+
+        foreach (var structDecl in program.Structs)
+        {
+            if (!_structs.TryAdd(structDecl.Name, structDecl))
+            {
+                Report(DiagnosticCodes.TypeMismatch,
+                    $"Struct '{structDecl.Name}' is already declared.",
+                    structDecl.Span);
+            }
+        }
+
         foreach (var func in program.Functions)
         {
             var signature = new FunctionSignature(
@@ -265,6 +278,54 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
                 break;
             }
+
+            case TargetAssignmentStatementNode targetAssignment:
+            {
+                string targetType;
+
+                switch (targetAssignment.Target)
+                {
+                    case IdentifierNode id:
+                        if (!scope.TryLookup(id.Name, out targetType!))
+                        {
+                            Report(DiagnosticCodes.UndefinedVariable,
+                                $"Undefined variable '{id.Name}'.",
+                                targetAssignment.Target.Span);
+                            CheckExpression(targetAssignment.Value, scope);
+                            return;
+                        }
+
+                        SemanticModel.SetExpressionType(id, targetType);
+                        break;
+
+                    case MemberAccessNode member:
+                        targetType = CheckMemberAccess(member, scope);
+                        SemanticModel.SetExpressionType(member, targetType);
+                        break;
+
+                    default:
+                        Report(DiagnosticCodes.TypeMismatch,
+                            "Invalid assignment target.",
+                            targetAssignment.Target.Span);
+                        CheckExpression(targetAssignment.Value, scope);
+                        return;
+                }
+
+                var valueType = CheckExpression(targetAssignment.Value, scope, targetType);
+                EnsureValueExpression(targetAssignment.Value, valueType);
+
+                if (targetType != TypeConst.Error &&
+                    valueType != TypeConst.Error &&
+                    !CanAssign(targetType, valueType, targetAssignment.Value))
+                {
+                    Report(DiagnosticCodes.TypeMismatch,
+                        $"Cannot assign '{valueType}' to target of type '{targetType}'.",
+                        targetAssignment.Value.Span);
+                }
+
+                break;
+            }
+
             case ForStatementNode forStatement:
             {
                 // The initializer variable must only exist within this loop.
@@ -357,6 +418,8 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             LiteralNode<char> _ => TypeConst.Char,
             LiteralNode<bool> _ => TypeConst.Bool,
             FunctionCallExpressionNode functionCall => CheckFunctionCall(functionCall, scope),
+            StructLiteralNode structLiteral => CheckStructLiteral(structLiteral, scope),
+            MemberAccessNode memberAccess => CheckMemberAccess(memberAccess, scope),
 
             _ => throw new Exception(
                 "Unknown expression type encountered during analysis.")
@@ -364,6 +427,101 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
         SemanticModel.SetExpressionType(expression, type);
         return type;
+    }
+
+    private string CheckStructLiteral(
+        StructLiteralNode literal,
+        SymbolTable scope)
+    {
+        if (!_structs.TryGetValue(literal.StructName, out var structDecl))
+        {
+            Report(DiagnosticCodes.TypeMismatch,
+                $"Unknown struct type '{literal.StructName}'.",
+                literal.Span);
+
+            foreach (var init in literal.Initializers)
+            {
+                CheckExpression(init.Value, scope);
+            }
+
+            return TypeConst.Error;
+        }
+
+        var declaredFields = structDecl.Fields.ToDictionary(f => f.Name, f => f.Type);
+        var seenFields = new HashSet<string>();
+
+        foreach (var init in literal.Initializers)
+        {
+            if (!declaredFields.TryGetValue(init.FieldName, out var fieldType))
+            {
+                Report(DiagnosticCodes.TypeMismatch,
+                    $"Struct '{literal.StructName}' has no field '{init.FieldName}'.",
+                    init.Span);
+                CheckExpression(init.Value, scope);
+                continue;
+            }
+
+            if (!seenFields.Add(init.FieldName))
+            {
+                Report(DiagnosticCodes.TypeMismatch,
+                    $"Duplicate initializer for field '{init.FieldName}' in '{literal.StructName}'.",
+                    init.Span);
+            }
+
+            var valueType = CheckExpression(init.Value, scope, fieldType);
+            EnsureValueExpression(init.Value, valueType);
+
+            if (valueType != TypeConst.Error &&
+                !CanAssign(fieldType, valueType, init.Value))
+            {
+                Report(DiagnosticCodes.TypeMismatch,
+                    $"Cannot assign type '{valueType}' to field '{init.FieldName}' of type '{fieldType}'.",
+                    init.Value.Span);
+            }
+        }
+
+        foreach (var field in structDecl.Fields)
+        {
+            if (!seenFields.Contains(field.Name))
+            {
+                Report(DiagnosticCodes.TypeMismatch,
+                    $"Missing initializer for field '{field.Name}' in struct '{literal.StructName}'.",
+                    literal.Span);
+            }
+        }
+
+        return literal.StructName;
+    }
+
+    private string CheckMemberAccess(
+        MemberAccessNode memberAccess,
+        SymbolTable scope)
+    {
+        var targetType = CheckExpression(memberAccess.Target, scope);
+
+        if (targetType == TypeConst.Error)
+        {
+            return TypeConst.Error;
+        }
+
+        if (!_structs.TryGetValue(targetType, out var structDecl))
+        {
+            Report(DiagnosticCodes.TypeMismatch,
+                $"Type '{targetType}' is not a struct and has no member '{memberAccess.MemberName}'.",
+                memberAccess.Span);
+            return TypeConst.Error;
+        }
+
+        var field = structDecl.Fields.FirstOrDefault(f => f.Name == memberAccess.MemberName);
+        if (field is null)
+        {
+            Report(DiagnosticCodes.TypeMismatch,
+                $"Struct '{targetType}' has no member '{memberAccess.MemberName}'.",
+                memberAccess.Span);
+            return TypeConst.Error;
+        }
+
+        return field.Type;
     }
 
     private string CheckIdentifier(IdentifierNode identifier, SymbolTable scope)

@@ -3,6 +3,7 @@ using Lumi.Core.Ast;
 using Lumi.Core.Semantics;
 using Lumi.Core.Syntax;
 using Lumi.LLVM.Helpers;
+using Lumi.LLVM.Structs;
 using Lumi.LLVM.Utils;
 
 namespace Lumi.LLVM.CodeGenerator;
@@ -17,6 +18,7 @@ public sealed class Codegen
     private readonly Stack<LoopTargets> _loopTargets = new();
     private readonly LLVMModuleRef _module;
     private readonly SemanticModel _semanticModel;
+    private readonly Dictionary<string, StructLayoutInfo> _structLayouts = new();
 
     // Track the return type of the function currently being generated
     private LLVMTypeRef _currentReturnType;
@@ -38,6 +40,8 @@ public sealed class Codegen
 
     public void GenerateProgram(ProgramNode program)
     {
+        RegisterStructs(program);
+
         // Declare every function in the LLVM module.
         foreach (var funcNode in program.Functions)
         {
@@ -127,6 +131,18 @@ public sealed class Codegen
             case VariableDeclarationNode varDecl:
             {
                 var declaredType = ResolveType(varDecl.Type);
+
+                if (_structLayouts.TryGetValue(varDecl.Type, out var structLayout) &&
+                    varDecl.Initializer is StructLiteralNode structLiteral)
+                {
+                    var alloca = _builder.BuildAlloca(structLayout.StructType, varDecl.Name);
+                    EmitStructLiteralFields(structLiteral, alloca, structLayout);
+                    _currentScope.Declare(
+                        varDecl.Name,
+                        new VariableSymbol(varDecl.Type, structLayout.StructType, alloca));
+                    break;
+                }
+
                 var initializer = GenerateExpression(varDecl.Initializer);
 
                 initializer = CastInitializer(
@@ -136,14 +152,27 @@ public sealed class Codegen
                     varDecl.Type,
                     $"init_{varDecl.Name}");
 
-                // Allocate storage and store the converted value.
-                var alloca = _builder.BuildAlloca(
-                    declaredType,
-                    varDecl.Name);
+                var scalarAlloca = _builder.BuildAlloca(declaredType, varDecl.Name);
+                _builder.BuildStore(initializer, scalarAlloca);
+                _currentScope.Declare(varDecl.Name, new VariableSymbol(varDecl.Type, declaredType, scalarAlloca));
 
-                _builder.BuildStore(initializer, alloca);
-                _currentScope.Declare(varDecl.Name, new VariableSymbol(varDecl.Type, declaredType, alloca));
+                break;
+            }
 
+            case TargetAssignmentStatementNode targetAssignment:
+            {
+                var (targetPtr, targetLumiType, targetLlvmType) =
+                    ResolveTargetAddress(targetAssignment.Target);
+
+                var value = GenerateExpression(targetAssignment.Value);
+                value = CastInitializer(
+                    value,
+                    targetAssignment.Value,
+                    targetLlvmType,
+                    targetLumiType,
+                    "assign_target");
+
+                _builder.BuildStore(value, targetPtr);
                 break;
             }
 
@@ -591,8 +620,15 @@ public sealed class Codegen
             LiteralNode<char> character => LLVMValueRef.CreateConstInt(_context.Int8Type, character.Value),
             LiteralNode<bool> boolean => LLVMValueRef.CreateConstInt(_context.Int1Type, (ulong)(boolean.Value ? 1 : 0)),
             FunctionCallExpressionNode functionCall => GenerateFunctionCall(functionCall),
+            MemberAccessNode member => GenerateMemberAccess(member),
             _ => throw new Exception("Unknown IR generation node target.")
         };
+    }
+
+    private LLVMValueRef GenerateMemberAccess(MemberAccessNode member)
+    {
+        var (fieldPtr, _, fieldLlvmType) = ResolveTargetAddress(member);
+        return _builder.BuildLoad2(fieldLlvmType, fieldPtr, $"load_{member.MemberName}");
     }
 
     private LLVMValueRef GenerateFunctionCall(
@@ -980,6 +1016,11 @@ public sealed class Codegen
 
     private LLVMTypeRef ResolveType(string typeName)
     {
+        if (_structLayouts.TryGetValue(typeName, out var structLayout))
+        {
+            return structLayout.StructType;
+        }
+
         return typeName switch
         {
             TypeConst.I8 or TypeConst.U8 => _context.Int8Type,
@@ -996,7 +1037,7 @@ public sealed class Codegen
             TypeConst.F64 => _context.DoubleType,
 
             _ => throw new NotSupportedException(
-                $"Unsupported backend data primitive type: {typeName}")
+                $"Unsupported backend data type: {typeName}")
         };
     }
 
@@ -1036,6 +1077,79 @@ public sealed class Codegen
         );
 
         Console.WriteLine($"[Codegen]: Object file written successfully to: {outputFileName}");
+    }
+
+    private void EmitStructLiteralFields(
+        StructLiteralNode literal,
+        LLVMValueRef structAlloca,
+        StructLayoutInfo layout)
+    {
+        foreach (var init in literal.Initializers)
+        {
+            if (!layout.FieldsByName.TryGetValue(init.FieldName, out var field))
+            {
+                throw new InvalidOperationException(
+                    $"Unknown field '{init.FieldName}' on struct '{layout.Name}'.");
+            }
+
+            var fieldValue = GenerateExpression(init.Value);
+            fieldValue = CastInitializer(
+                fieldValue,
+                init.Value,
+                field.LlvmType,
+                field.LumiType,
+                $"field_{layout.Name}_{field.Name}");
+
+            var fieldPtr = _builder.BuildStructGEP2(
+                layout.StructType,
+                structAlloca,
+                (uint)field.Index,
+                $"{layout.Name}.{field.Name}.ptr");
+
+            _builder.BuildStore(fieldValue, fieldPtr);
+        }
+    }
+
+    private (LLVMValueRef Pointer, string LumiType, LLVMTypeRef LlvmType) ResolveTargetAddress(
+        ExpressionNode target)
+    {
+        switch (target)
+        {
+            case IdentifierNode id:
+            {
+                var variable = _currentScope.ResolveVariable(id.Name);
+                return (variable.Allocation, variable.TypeName, variable.LLVMType);
+            }
+
+            case MemberAccessNode member:
+            {
+                var (basePtr, baseLumiType, _) = ResolveTargetAddress(member.Target);
+
+                if (!_structLayouts.TryGetValue(baseLumiType, out var layout))
+                {
+                    throw new InvalidOperationException(
+                        $"Type '{baseLumiType}' is not a struct.");
+                }
+
+                if (!layout.FieldsByName.TryGetValue(member.MemberName, out var field))
+                {
+                    throw new InvalidOperationException(
+                        $"Struct '{baseLumiType}' has no field '{member.MemberName}'.");
+                }
+
+                var fieldPtr = _builder.BuildStructGEP2(
+                    layout.StructType,
+                    basePtr,
+                    (uint)field.Index,
+                    $"{baseLumiType}.{field.Name}.ptr");
+
+                return (fieldPtr, field.LumiType, field.LlvmType);
+            }
+
+            default:
+                throw new NotSupportedException(
+                    $"Unsupported member/assignment target '{target.GetType().Name}'.");
+        }
     }
 
     private LLVMValueRef CastInteger(
@@ -1209,6 +1323,68 @@ public sealed class Codegen
             _ => throw new NotSupportedException(
                 $"Unsupported shift operator: '{binary.Operator}'.")
         };
+    }
+
+    private void RegisterStructs(ProgramNode program)
+    {
+        _structLayouts.Clear();
+
+        var namedTypes = new Dictionary<string, LLVMTypeRef>();
+
+        foreach (var structNode in program.Structs)
+        {
+            var llvmStruct = _context.CreateNamedStruct(structNode.Name);
+            namedTypes[structNode.Name] = llvmStruct;
+        }
+
+        // Store partial/opaque types first so nested struct fields can resolve them
+        foreach (var structNode in program.Structs)
+        {
+            var fieldsByName = new Dictionary<string, StructFieldLayout>();
+            var orderedFields = new List<StructFieldLayout>();
+
+            for (var i = 0; i < structNode.Fields.Count; i++)
+            {
+                var field = structNode.Fields[i];
+                var layout = new StructFieldLayout(i, field.Name, field.Type, default);
+                orderedFields.Add(layout);
+                fieldsByName[field.Name] = layout;
+            }
+
+            _structLayouts[structNode.Name] = new StructLayoutInfo(
+                structNode.Name,
+                namedTypes[structNode.Name],
+                orderedFields,
+                fieldsByName);
+        }
+
+        // Set struct bodies now that every struct type exists
+        foreach (var structNode in program.Structs)
+        {
+            var info = _structLayouts[structNode.Name];
+            var fieldLlvmTypes = new LLVMTypeRef[structNode.Fields.Count];
+            var updatedOrdered = new List<StructFieldLayout>(structNode.Fields.Count);
+            var updatedByName = new Dictionary<string, StructFieldLayout>(structNode.Fields.Count);
+
+            for (var i = 0; i < structNode.Fields.Count; i++)
+            {
+                var field = structNode.Fields[i];
+                var fieldLlvmType = ResolveType(field.Type);
+                fieldLlvmTypes[i] = fieldLlvmType;
+
+                var layout = new StructFieldLayout(i, field.Name, field.Type, fieldLlvmType);
+                updatedOrdered.Add(layout);
+                updatedByName[field.Name] = layout;
+            }
+
+            info.StructType.StructSetBody(fieldLlvmTypes, false);
+
+            _structLayouts[structNode.Name] = new StructLayoutInfo(
+                structNode.Name,
+                info.StructType,
+                updatedOrdered,
+                updatedByName);
+        }
     }
 
     private sealed record LoopTargets(

@@ -98,10 +98,19 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         Consume(TokenType.RParen);
         Consume(TokenType.Arrow);
 
-        var returnType = Current.Value;
-        var returnToken = Lexer.Keywords.GetValueOrDefault(returnType);
+        if (Current.Type != TokenType.TypeVoid &&
+            !IsTypeToken(Current.Type) &&
+            Current.Type != TokenType.Identifier)
+        {
+            Report(
+                DiagnosticCodes.ExpectedToken,
+                $"Syntax Error: Expected return type, got {Current.Type} ('{Current.Value}') at position {_position}",
+                Current.Span);
+            throw new ParseException();
+        }
 
-        Consume(returnToken);
+        var returnType = Current.Value;
+        Advance();
         Consume(TokenType.LBrace);
 
         var body = new List<StatementNode>();
@@ -130,6 +139,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
     public ProgramNode ParseProgram()
     {
         var functions = new List<FunctionDeclarationNode>();
+        var structs = new List<StructDeclarationNode>();
 
         while (Current.Type != TokenType.EndOfFile)
         {
@@ -137,7 +147,14 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
             try
             {
-                functions.Add(ParseFunction());
+                if (Current.Type == TokenType.KeywordStruct)
+                {
+                    structs.Add(ParseStructDeclaration());
+                }
+                else
+                {
+                    functions.Add(ParseFunction());
+                }
             }
             catch (ParseException)
             {
@@ -159,7 +176,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
                 functions[^1].Span!.End)
             : Current.Span;
 
-        return new ProgramNode(functions, span);
+        return new ProgramNode(functions, structs, span);
     }
 
     private void SynchronizeTopLevel()
@@ -169,6 +186,122 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         {
             Advance();
         }
+    }
+
+    private StructDeclarationNode ParseStructDeclaration()
+    {
+        var start = Consume(TokenType.KeywordStruct);
+
+        var nameToken = Current;
+        var structName = nameToken.Value;
+        Consume(TokenType.Identifier);
+
+        Consume(TokenType.LBrace);
+
+        var fields = new List<StructFieldNode>();
+
+        while (Current.Type != TokenType.RBrace &&
+               Current.Type != TokenType.EndOfFile)
+        {
+            if (!IsTypeToken(Current.Type) && Current.Type != TokenType.Identifier)
+            {
+                Report(
+                    DiagnosticCodes.ExpectedToken,
+                    $"Syntax Error: Expected field type, got {Current.Type} ('{Current.Value}') at position {_position}",
+                    Current.Span);
+                throw new ParseException();
+            }
+
+            var fieldTypeToken = Current;
+            var fieldType = fieldTypeToken.Value;
+            Advance();
+
+            var fieldNameToken = Current;
+            var fieldName = fieldNameToken.Value;
+            Consume(TokenType.Identifier);
+
+            var fieldSpan = CreateSpan(
+                fieldTypeToken.Span.Start,
+                fieldNameToken.Span.End);
+
+            fields.Add(new StructFieldNode(fieldType, fieldName, fieldSpan));
+
+            if (Current.Type == TokenType.Colon)
+            {
+                Consume(TokenType.Colon);
+            }
+        }
+
+        var closingBrace = Consume(TokenType.RBrace);
+
+        var span = CreateSpan(
+            start.Span.Start,
+            closingBrace.Span.End);
+
+        return new StructDeclarationNode(
+            structName,
+            fields,
+            span);
+    }
+
+    private StructLiteralNode ParseStructLiteral(Token identifierToken)
+    {
+        var structName = identifierToken.Value;
+        Consume(TokenType.LBrace);
+
+        var initializers = new List<StructFieldInitNode>();
+
+        while (Current.Type != TokenType.RBrace &&
+               Current.Type != TokenType.EndOfFile)
+        {
+            var fieldToken = Current;
+            var fieldName = fieldToken.Value;
+            Consume(TokenType.Identifier);
+
+            Consume(TokenType.Colon);
+
+            var valueExpr = ParseExpression();
+
+            var initSpan = CreateSpan(
+                fieldToken.Span.Start,
+                valueExpr.Span!.End);
+
+            initializers.Add(new StructFieldInitNode(fieldName, valueExpr, initSpan));
+
+            if (Current.Type != TokenType.Comma)
+            {
+                break;
+            }
+
+            Consume(TokenType.Comma);
+        }
+
+        var closingBrace = Consume(TokenType.RBrace);
+
+        var span = CreateSpan(
+            identifierToken.Span.Start,
+            closingBrace.Span.End);
+
+        return new StructLiteralNode(
+            structName,
+            initializers,
+            span);
+    }
+
+    private string ParseTypeName()
+    {
+        if (!IsTypeToken(Current.Type) && Current.Type != TokenType.Identifier)
+        {
+            Report(
+                DiagnosticCodes.ExpectedToken,
+                $"Syntax Error: Expected type name, got {Current.Type} ('{Current.Value}') at position {_position}",
+                Current.Span);
+            throw new ParseException();
+        }
+
+        var typeName = Current.Value;
+        Advance();
+        return typeName;
     }
 
 
@@ -183,35 +316,25 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
         while (true)
         {
-            if (!IsTypeToken(Current.Type))
-            {
-                Report(
-                    DiagnosticCodes.ExpectedParameterType,
-                    $"Syntax Error: Expected parameter type, got {Current.Type} ('{Current.Value}').",
-                    Current.Span);
-                throw new ParseException();
-            }
-
-            var typeToken = Current;
-            var type = Current.Value;
-            Advance();
+            var typeStart = Current.Span.Start;
+            var type = ParseTypeName();
 
             var nameToken = Current;
-            var name = Current.Value;
+            var name = nameToken.Value;
             Consume(TokenType.Identifier);
 
             var span = CreateSpan(
-                typeToken.Span.Start,
+                typeStart,
                 nameToken.Span.End);
 
             parameters.Add(new FunctionParameterNode(type, name, span));
 
-            if (Current.Type != TokenType.Comma)
+            if (Current.Type != TokenType.Colon)
             {
                 break;
             }
 
-            Consume(TokenType.Comma);
+            Consume(TokenType.Colon);
         }
 
         return parameters;
@@ -235,6 +358,14 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
                 TokenType.TypeChar:
             {
                 return ParseVariableDeclaration();
+            }
+            case TokenType.Identifier when Next.Type == TokenType.Identifier:
+            {
+                return ParseVariableDeclaration();
+            }
+            case TokenType.Identifier when Next.Type == TokenType.Assign:
+            {
+                return ParseAssignmentStatement();
             }
             case TokenType.KeywordReturn:
             {
@@ -306,6 +437,24 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             default:
             {
                 var expr = ParseExpression();
+
+                if (Current.Type == TokenType.Assign)
+                {
+                    if (expr is not IdentifierNode and not MemberAccessNode)
+                    {
+                        Report(
+                            DiagnosticCodes.UnexpectedToken,
+                            $"Syntax Error: Invalid assignment target at {Current.Span}",
+                            Current.Span);
+                        throw new ParseException();
+                    }
+
+                    Consume(TokenType.Assign);
+                    var value = ParseExpression();
+                    var span = CreateSpan(expr.Span!.Start, value.Span!.End);
+
+                    return new TargetAssignmentStatementNode(expr, value, span);
+                }
 
                 return new ExpressionStatementNode(
                     expr,
@@ -454,14 +603,36 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
     {
         var leftExpr = ParsePrefix();
 
-        while (Current.Type != TokenType.EndOfFile &&
-               Current.Type != TokenType.RParen &&
-               precedence < GetPrecedence(Current.Type))
+        while (Current.Type != TokenType.EndOfFile)
         {
+            if (Current.Type == TokenType.Dot)
+            {
+                leftExpr = ParseMemberAccess(leftExpr);
+                continue;
+            }
+
+            if (Current.Type == TokenType.RParen ||
+                precedence >= GetPrecedence(Current.Type))
+            {
+                break;
+            }
+
             leftExpr = ParseInfix(leftExpr);
         }
 
         return leftExpr;
+    }
+
+    private MemberAccessNode ParseMemberAccess(ExpressionNode target)
+    {
+        Consume(TokenType.Dot);
+
+        var memberToken = Current;
+        var memberName = memberToken.Value;
+        Consume(TokenType.Identifier);
+
+        var span = CreateSpan(target.Span!.Start, memberToken.Span.End);
+        return new MemberAccessNode(target, memberName, span);
     }
 
     private ExpressionStatementNode ParseExpressionStatement()
@@ -607,6 +778,11 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
         Advance();
 
+        if (Current.Type == TokenType.LBrace)
+        {
+            return ParseStructLiteral(identifierToken);
+        }
+
         if (Current.Type != TokenType.LParen)
         {
             return new IdentifierNode(name, identifierToken.Span);
@@ -622,12 +798,12 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             {
                 arguments.Add(ParseExpression());
 
-                if (Current.Type != TokenType.Comma)
+                if (Current.Type != TokenType.Colon)
                 {
                     break;
                 }
 
-                Consume(TokenType.Comma);
+                Consume(TokenType.Colon);
             }
         }
 
@@ -644,8 +820,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
     {
         var start = Current.Span.Start;
 
-        var type = Current.Value;
-        Advance();
+        var type = ParseTypeName();
 
         var nameToken = Current;
         var name = nameToken.Value;

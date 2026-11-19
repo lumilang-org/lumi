@@ -87,6 +87,58 @@ public sealed class ExpressionStatementNode(ExpressionNode expression, SourceSpa
     public ExpressionNode Expression { get; } = expression;
 }
 
+public sealed class StructFieldNode(string type, string name, SourceSpan span) : ASTNode(span)
+{
+    public string Type { get; } = type;
+    public string Name { get; } = name;
+}
+
+public sealed class StructDeclarationNode(
+    string name,
+    IReadOnlyList<StructFieldNode> fields,
+    SourceSpan span) : ASTNode(span)
+{
+    public string Name { get; } = name;
+    public IReadOnlyList<StructFieldNode> Fields { get; } = fields;
+}
+
+public sealed class StructFieldInitNode(
+    string fieldName,
+    ExpressionNode value,
+    SourceSpan span) : ASTNode(span)
+{
+    public string FieldName { get; } = fieldName;
+    public ExpressionNode Value { get; } = value;
+}
+
+public sealed class StructLiteralNode(
+    string structName,
+    IReadOnlyList<StructFieldInitNode> initializers,
+    SourceSpan span) : ExpressionNode(span)
+{
+    public string StructName { get; } = structName;
+    public IReadOnlyList<StructFieldInitNode> Initializers { get; } = initializers;
+}
+
+public sealed class MemberAccessNode(
+    ExpressionNode target,
+    string memberName,
+    SourceSpan span) : ExpressionNode(span)
+{
+    public ExpressionNode Target { get; } = target;
+    public string MemberName { get; } = memberName;
+}
+
+// Generalize assignment target so both `a = 1` and `p.x = 1` work
+public sealed class TargetAssignmentStatementNode(
+    ExpressionNode target,
+    ExpressionNode value,
+    SourceSpan span) : StatementNode(span)
+{
+    public ExpressionNode Target { get; } = target;
+    public ExpressionNode Value { get; } = value;
+}
+
 public sealed class ReturnStatementNode(ExpressionNode? expression, SourceSpan span) : StatementNode(span)
 {
     public ExpressionNode? Expression { get; } = expression;
@@ -163,9 +215,11 @@ public sealed class FunctionParameterNode(
 
 public sealed class ProgramNode(
     IReadOnlyList<FunctionDeclarationNode> functions,
+    IReadOnlyList<StructDeclarationNode> structs,
     SourceSpan span) : ASTNode(span)
 {
     public IReadOnlyList<FunctionDeclarationNode> Functions { get; } = functions;
+    public IReadOnlyList<StructDeclarationNode> Structs { get; } = structs;
 }
 
 public sealed class FunctionCallExpressionNode(

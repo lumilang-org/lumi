@@ -43,5 +43,7 @@ public static class TypeConst
     public const string For = "for";
     public const string Break = "break";
     public const string Continue = "continue";
+    public const string Return = "return";
+    public const string Struct = "struct";
     public const string Error = "<error>";
 }

@@ -41,6 +41,8 @@ public enum TokenType
     Minus,
     Arrow,
     Comma,
+    Dot,
+    Colon,
     Semicolon,
     LBrace,
     RBrace,

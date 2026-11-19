@@ -1,19 +1,11 @@
-func first() -> void {
-    println(10)
+struct Vec {
+    u32 x
+    u32 y
 }
 
-func broken() -> void {
-    println('a')
-}
+func main() -> void {
+    Vec p = Vec { x: 10, y: 20 }
 
-func third() -> void {
-    println(30)
-}
-
-func main() -> i32 {
-    first()
-    broken()
-    third()
-
-    return 1
+    p.x = p.x + 10
+    println(p.x + p.y)
 }

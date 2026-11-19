@@ -8,9 +8,9 @@ public sealed class Lexer
     {
         { "print", TokenType.PrintFunc },
         { "println", TokenType.PrintFunc },
-        { "struct", TokenType.KeywordStruct },
+        { TypeConst.Struct, TokenType.KeywordStruct },
         { "func", TokenType.KeywordFunc },
-        { "return", TokenType.KeywordReturn },
+        { TypeConst.Return, TokenType.KeywordReturn },
         { TypeConst.While, TokenType.KeywordWhile },
         { TypeConst.For, TokenType.KeywordFor },
         { TypeConst.Break, TokenType.KeywordBreak },
@@ -307,6 +307,14 @@ public sealed class Lexer
             case ',':
                 Advance();
                 return CreateToken(TokenType.Comma, ",", start);
+
+            case ':':
+                Advance();
+                return CreateToken(TokenType.Colon, ":", start);
+
+            case '.':
+                Advance();
+                return CreateToken(TokenType.Dot, ".", start);
 
             case ';':
                 Advance();
