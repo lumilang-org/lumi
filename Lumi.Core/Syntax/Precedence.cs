@@ -12,5 +12,6 @@ public enum Precedence
     Shift = 7,
     Sum = 8,
     Product = 9,
-    Prefix = 10
+    Prefix = 10,
+    Postfix = 11
 }

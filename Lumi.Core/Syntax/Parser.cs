@@ -52,6 +52,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
     {
         return type switch
         {
+            TokenType.LBracket => Precedence.Postfix,
             TokenType.LogicalOr => Precedence.LogicalOr,
 
             TokenType.LogicalAnd => Precedence.LogicalAnd,
@@ -301,6 +302,15 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
         var typeName = Current.Value;
         Advance();
+
+        while (Current.Type == TokenType.LBracket)
+        {
+            Consume(TokenType.LBracket);
+            var lengthToken = Consume(TokenType.Number);
+            Consume(TokenType.RBracket);
+            typeName += $"[{lengthToken.Value}]";
+        }
+
         return typeName;
     }
 
@@ -340,34 +350,61 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         return parameters;
     }
 
+    private bool IsVariableDeclaration()
+    {
+        if (IsTypeToken(Current.Type))
+        {
+            return true;
+        }
+
+        if (Current.Type != TokenType.Identifier)
+        {
+            return false;
+        }
+
+        // It's an identifier. Check if it's followed by another identifier (e.g., Vec p)
+        // or a bracket (e.g., Vec[2] p)
+        var offset = 1;
+        while (Peek(offset).Type == TokenType.LBracket)
+        {
+            offset++; // Consume '['
+            if (Peek(offset).Type != TokenType.Number)
+            {
+                return false;
+            }
+
+            offset++; // Consume number
+            if (Peek(offset).Type != TokenType.RBracket)
+            {
+                return false;
+            }
+
+            offset++; // Consume ']'
+        }
+
+        return Peek(offset).Type == TokenType.Identifier;
+    }
+
     private StatementNode ParseStatement()
     {
+        if (IsVariableDeclaration())
+        {
+            return ParseVariableDeclaration();
+        }
+
         switch (Current.Type)
         {
-            case
-                TokenType.TypeI8 or
-                TokenType.TypeI16 or
-                TokenType.TypeI32 or
-                TokenType.TypeI64 or
-                TokenType.TypeU8 or
-                TokenType.TypeU16 or
-                TokenType.TypeU32 or
-                TokenType.TypeU64 or
-                TokenType.TypeF16 or
-                TokenType.TypeF32 or
-                TokenType.TypeF64 or
-                TokenType.TypeBool or
-                TokenType.TypeChar:
-            {
-                return ParseVariableDeclaration();
-            }
-            case TokenType.Identifier when Next.Type == TokenType.Identifier:
-            {
-                return ParseVariableDeclaration();
-            }
             case TokenType.Identifier when Next.Type == TokenType.Assign:
             {
                 return ParseAssignmentStatement();
+            }
+            case TokenType.Identifier when Next.Type == TokenType.LBracket || Next.Type == TokenType.Dot:
+            {
+                return ParseTargetAssignmentStatement();
+            }
+            case TokenType.Identifier when Next.Type == TokenType.LParen:
+            {
+                return ParseExpressionStatement();
             }
             case TokenType.KeywordReturn:
             {
@@ -615,7 +652,19 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
                 continue;
             }
 
+            if (Current.Type == TokenType.LBracket)
+            {
+                if (precedence >= Precedence.Postfix)
+                {
+                    break;
+                }
+
+                leftExpr = ParseIndexExpression(leftExpr);
+                continue;
+            }
+
             if (Current.Type == TokenType.RParen ||
+                Current.Type == TokenType.RBracket ||
                 precedence >= GetPrecedence(Current.Type))
             {
                 break;
@@ -625,6 +674,17 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         }
 
         return leftExpr;
+    }
+
+    private ExpressionNode ParseIndexExpression(ExpressionNode target)
+    {
+        var start = target.Span.Start;
+        Consume(TokenType.LBracket);
+        var index = ParseExpression();
+        var endToken = Consume(TokenType.RBracket);
+
+        var span = CreateSpan(start, endToken.Span.End);
+        return new IndexExpressionNode(target, index, span);
     }
 
     private MemberAccessNode ParseMemberAccess(ExpressionNode target)
@@ -653,6 +713,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
     {
         switch (Current.Type)
         {
+            case TokenType.LBracket:
+                return ParseArrayLiteral();
             case TokenType.Number:
                 return ParseNumberLiteral();
             case TokenType.Identifier:
@@ -687,6 +749,32 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         Consume(TokenType.RParen);
 
         return expression;
+    }
+
+    private ExpressionNode ParseArrayLiteral()
+    {
+        var startToken = Consume(TokenType.LBracket);
+        var elements = new List<ExpressionNode>();
+
+        if (Current.Type != TokenType.RBracket)
+        {
+            while (true)
+            {
+                elements.Add(ParseExpression());
+
+                if (Current.Type != TokenType.Comma)
+                {
+                    break;
+                }
+
+                Consume(TokenType.Comma);
+            }
+        }
+
+        var endToken = Consume(TokenType.RBracket);
+        var span = CreateSpan(startToken.Span.Start, endToken.Span.End);
+
+        return new ArrayLiteralNode(elements, span);
     }
 
     private ExpressionNode ParseCharLiteral()
@@ -830,11 +918,17 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         var name = nameToken.Value;
         Consume(TokenType.Identifier);
 
-        Consume(TokenType.Assign);
+        ExpressionNode? initializer = null;
+        var end = nameToken.Span.End;
 
-        var initializer = ParseExpression();
+        if (Current.Type == TokenType.Assign)
+        {
+            Consume(TokenType.Assign);
+            initializer = ParseExpression();
+            end = initializer.Span!.End;
+        }
 
-        var span = CreateSpan(start, initializer.Span!.End);
+        var span = CreateSpan(start, end);
 
         return new VariableDeclarationNode(
             type,
@@ -857,6 +951,19 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         var span = CreateSpan(start, value.Span!.End);
 
         return new AssignmentStatementNode(name, value, span);
+    }
+
+    private StatementNode ParseTargetAssignmentStatement()
+    {
+        var start = Current.Span.Start;
+        var target = ParseExpression();
+
+        Consume(TokenType.Assign);
+
+        var value = ParseExpression();
+        var span = CreateSpan(start, value.Span!.End);
+
+        return new TargetAssignmentStatementNode(target, value, span);
     }
 
     private SourceSpan CreateSpan(SourceLocation start, SourceLocation end)

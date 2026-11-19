@@ -13,9 +13,11 @@ static void PrintDiagnostics(DiagnosticBag diagnostics)
     }
 }
 
-var sourceCodePath = Path.Combine(
-    Directory.GetCurrentDirectory(),
-    "main.lumi");
+var sourceCodePath = args.Length > 0
+    ? args[0]
+    : Path.Combine(
+        Directory.GetCurrentDirectory(),
+        "main.lumi");
 
 var lumiCode = File.ReadAllText(sourceCodePath);
 

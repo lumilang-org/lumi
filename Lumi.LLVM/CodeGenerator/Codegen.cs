@@ -132,6 +132,13 @@ public sealed class Codegen
             {
                 var declaredType = ResolveType(varDecl.Type);
 
+                if (varDecl.Initializer == null)
+                {
+                    var alloca = _builder.BuildAlloca(declaredType, varDecl.Name);
+                    _currentScope.Declare(varDecl.Name, new VariableSymbol(varDecl.Type, declaredType, alloca));
+                    break;
+                }
+
                 if (_structLayouts.TryGetValue(varDecl.Type, out var structLayout) &&
                     varDecl.Initializer is StructLiteralNode structLiteral)
                 {
@@ -140,6 +147,17 @@ public sealed class Codegen
                     _currentScope.Declare(
                         varDecl.Name,
                         new VariableSymbol(varDecl.Type, structLayout.StructType, alloca));
+                    break;
+                }
+
+                if (varDecl.Type.Contains('[') && varDecl.Initializer is ArrayLiteralNode arrayLiteral)
+                {
+                    var arrayLlvmType = ResolveType(varDecl.Type);
+                    var alloca = _builder.BuildAlloca(arrayLlvmType, varDecl.Name);
+                    EmitArrayLiteralElements(arrayLiteral, alloca, arrayLlvmType);
+                    _currentScope.Declare(
+                        varDecl.Name,
+                        new VariableSymbol(varDecl.Type, arrayLlvmType, alloca));
                     break;
                 }
 
@@ -619,10 +637,71 @@ public sealed class Codegen
             UnaryExpressionNode unary => GenerateUnary(unary),
             LiteralNode<char> character => LLVMValueRef.CreateConstInt(_context.Int8Type, character.Value),
             LiteralNode<bool> boolean => LLVMValueRef.CreateConstInt(_context.Int1Type, (ulong)(boolean.Value ? 1 : 0)),
+            StructLiteralNode structLiteral => GenerateStructLiteral(structLiteral),
+            ArrayLiteralNode arrayLiteral => GenerateArrayLiteral(arrayLiteral),
+            IndexExpressionNode indexExpression => GenerateIndexExpression(indexExpression),
             FunctionCallExpressionNode functionCall => GenerateFunctionCall(functionCall),
             MemberAccessNode member => GenerateMemberAccess(member),
             _ => throw new Exception("Unknown IR generation node target.")
         };
+    }
+
+    private LLVMValueRef GenerateStructLiteral(StructLiteralNode literal)
+    {
+        var typeName = _semanticModel.GetExpressionType(literal);
+        if (!_structLayouts.TryGetValue(typeName, out var structLayout))
+        {
+            throw new Exception($"Codegen Error: Struct layout for '{typeName}' not found.");
+        }
+
+        var alloca = _builder.BuildAlloca(structLayout.StructType, "struct_literal");
+        EmitStructLiteralFields(literal, alloca, structLayout);
+        return _builder.BuildLoad2(structLayout.StructType, alloca, "struct_literal_load");
+    }
+
+    private LLVMValueRef GenerateArrayLiteral(ArrayLiteralNode literal)
+    {
+        var typeName = _semanticModel.GetExpressionType(literal);
+        var llvmType = ResolveType(typeName);
+        var alloca = _builder.BuildAlloca(llvmType, "array_literal");
+
+        EmitArrayLiteralElements(literal, alloca, llvmType);
+
+        return _builder.BuildLoad2(llvmType, alloca, "array_literal_load");
+    }
+
+    private void EmitArrayLiteralElements(ArrayLiteralNode literal, LLVMValueRef arrayPtr, LLVMTypeRef arrayType)
+    {
+        var elementType = arrayType.ElementType;
+        for (var i = 0; i < literal.Elements.Count; i++)
+        {
+            var elementValue = GenerateExpression(literal.Elements[i]);
+            var elementLumiType = _semanticModel.GetExpressionType(literal.Elements[i]);
+
+            var indices = new[]
+            {
+                LLVMValueRef.CreateConstInt(_context.Int32Type, 0),
+                LLVMValueRef.CreateConstInt(_context.Int32Type, (uint)i)
+            };
+
+            var elementPtr = _builder.BuildGEP2(arrayType, arrayPtr, indices, $"array_literal_idx_{i}");
+
+            // Handle type mismatch (e.g., constant promotion)
+            elementValue = CastInitializer(
+                elementValue,
+                literal.Elements[i],
+                elementType,
+                "", // targetTypeName is not used for integers anyway
+                $"array_literal_init_{i}");
+
+            _builder.BuildStore(elementValue, elementPtr);
+        }
+    }
+
+    private LLVMValueRef GenerateIndexExpression(IndexExpressionNode indexExpr)
+    {
+        var (ptr, _, elementType) = ResolveTargetAddress(indexExpr);
+        return _builder.BuildLoad2(elementType, ptr, "index_load");
     }
 
     private LLVMValueRef GenerateMemberAccess(MemberAccessNode member)
@@ -1016,6 +1095,16 @@ public sealed class Codegen
 
     private LLVMTypeRef ResolveType(string typeName)
     {
+        if (typeName.Contains('[') && typeName.EndsWith(']'))
+        {
+            var lastBracket = typeName.LastIndexOf('[');
+            var elementTypeName = typeName.Substring(0, lastBracket);
+            var lengthStr = typeName.Substring(lastBracket + 1, typeName.Length - lastBracket - 2);
+            var length = uint.Parse(lengthStr);
+            var elementType = ResolveType(elementTypeName);
+            return LLVMTypeRef.CreateArray(elementType, length);
+        }
+
         if (_structLayouts.TryGetValue(typeName, out var structLayout))
         {
             return structLayout.StructType;
@@ -1144,6 +1233,30 @@ public sealed class Codegen
                     $"{baseLumiType}.{field.Name}.ptr");
 
                 return (fieldPtr, field.LumiType, field.LlvmType);
+            }
+
+            case IndexExpressionNode indexExpr:
+            {
+                var (basePtr, baseLumiType, baseLlvmType) = ResolveTargetAddress(indexExpr.Target);
+
+                var indexValue = GenerateExpression(indexExpr.Index);
+
+                var indices = new[]
+                {
+                    LLVMValueRef.CreateConstInt(_context.Int32Type, 0),
+                    indexValue
+                };
+
+                var elementPtr = _builder.BuildGEP2(
+                    baseLlvmType,
+                    basePtr,
+                    indices,
+                    "array_index_ptr");
+
+                var elementType = baseLlvmType.ElementType;
+                var elementLumiType = _semanticModel.GetExpressionType(indexExpr);
+
+                return (elementPtr, elementLumiType, elementType);
             }
 
             default:

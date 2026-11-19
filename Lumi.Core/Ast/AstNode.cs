@@ -61,12 +61,12 @@ public sealed class PrintStatementNode(ExpressionNode expression, SourceSpan spa
 public sealed class VariableDeclarationNode(
     string type,
     string name,
-    ExpressionNode initializer,
+    ExpressionNode? initializer,
     SourceSpan span) : StatementNode(span)
 {
     public string Type { get; } = type;
     public string Name { get; } = name;
-    public ExpressionNode Initializer { get; } = initializer;
+    public ExpressionNode? Initializer { get; } = initializer;
 }
 
 public sealed class FunctionDeclarationNode(
@@ -220,6 +220,22 @@ public sealed class ProgramNode(
 {
     public IReadOnlyList<FunctionDeclarationNode> Functions { get; } = functions;
     public IReadOnlyList<StructDeclarationNode> Structs { get; } = structs;
+}
+
+public sealed class ArrayLiteralNode(
+    IReadOnlyList<ExpressionNode> elements,
+    SourceSpan span) : ExpressionNode(span)
+{
+    public IReadOnlyList<ExpressionNode> Elements { get; } = elements;
+}
+
+public sealed class IndexExpressionNode(
+    ExpressionNode target,
+    ExpressionNode index,
+    SourceSpan span) : ExpressionNode(span)
+{
+    public ExpressionNode Target { get; } = target;
+    public ExpressionNode Index { get; } = index;
 }
 
 public sealed class FunctionCallExpressionNode(

@@ -30,4 +30,6 @@ public static class DiagnosticCodes
     public const string InvalidCondition = "LUMI1008";
     public const string InvalidOperator = "LUMI1009";
     public const string InvalidShiftAmount = "LUMI1010";
+    public const string InvalidArrayLength = "LUMI1011";
+    public const string IndexOutOfBounds = "LUMI1012";
 }

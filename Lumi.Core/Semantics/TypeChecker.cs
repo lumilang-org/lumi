@@ -20,6 +20,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
         foreach (var parameter in func.Parameters)
         {
+            ValidateType(parameter.Type, parameter.Span);
             if (!scope.TryDeclare(parameter.Name, parameter.Type))
             {
                 Report(
@@ -57,6 +58,14 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             }
         }
 
+        foreach (var structDecl in program.Structs)
+        {
+            foreach (var field in structDecl.Fields)
+            {
+                ValidateType(field.Type, field.Span);
+            }
+        }
+
         foreach (var func in program.Functions)
         {
             var signature = new FunctionSignature(
@@ -84,28 +93,33 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         {
             case VariableDeclarationNode varDecl:
 
-                var initializerType = CheckExpression(
-                    varDecl.Initializer,
-                    scope,
-                    varDecl.Type);
+                ValidateType(varDecl.Type, varDecl.Span);
 
-                EnsureValueExpression(
-                    varDecl.Initializer,
-                    initializerType);
-
-                if (varDecl.Type.StartsWith('u') &&
-                    varDecl.Initializer is UnaryExpressionNode { Operator: "-" })
+                if (varDecl.Initializer != null)
                 {
-                    Report(DiagnosticCodes.TypeMismatch,
-                        $"Cannot assign a negative value to unsigned type '{varDecl.Type}'.",
-                        varDecl.Initializer.Span);
-                }
+                    var initializerType = CheckExpression(
+                        varDecl.Initializer,
+                        scope,
+                        varDecl.Type);
 
-                if (!CanAssign(varDecl.Type, initializerType, varDecl.Initializer))
-                {
-                    Report(DiagnosticCodes.TypeMismatch,
-                        $"Cannot assign type '{initializerType}' to a variable of type '{varDecl.Type}'.",
-                        varDecl.Initializer.Span);
+                    EnsureValueExpression(
+                        varDecl.Initializer,
+                        initializerType);
+
+                    if (varDecl.Type.StartsWith('u') &&
+                        varDecl.Initializer is UnaryExpressionNode { Operator: "-" })
+                    {
+                        Report(DiagnosticCodes.TypeMismatch,
+                            $"Cannot assign a negative value to unsigned type '{varDecl.Type}'.",
+                            varDecl.Initializer.Span);
+                    }
+
+                    if (!CanAssign(varDecl.Type, initializerType, varDecl.Initializer))
+                    {
+                        Report(DiagnosticCodes.TypeMismatch,
+                            $"Cannot assign type '{initializerType}' to a variable of type '{varDecl.Type}'.",
+                            varDecl.Initializer.Span);
+                    }
                 }
 
                 if (!scope.TryDeclare(varDecl.Name, varDecl.Type))
@@ -303,6 +317,11 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                         SemanticModel.SetExpressionType(member, targetType);
                         break;
 
+                    case IndexExpressionNode indexExpr:
+                        targetType = CheckIndexExpression(indexExpr, scope);
+                        SemanticModel.SetExpressionType(indexExpr, targetType);
+                        break;
+
                     default:
                         Report(DiagnosticCodes.TypeMismatch,
                             "Invalid assignment target.",
@@ -417,6 +436,8 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
             LiteralNode<char> _ => TypeConst.Char,
             LiteralNode<bool> _ => TypeConst.Bool,
+            ArrayLiteralNode arrayLiteral => CheckArrayLiteral(arrayLiteral, scope, expectedType),
+            IndexExpressionNode indexExpression => CheckIndexExpression(indexExpression, scope),
             FunctionCallExpressionNode functionCall => CheckFunctionCall(functionCall, scope),
             StructLiteralNode structLiteral => CheckStructLiteral(structLiteral, scope),
             MemberAccessNode memberAccess => CheckMemberAccess(memberAccess, scope),
@@ -501,6 +522,14 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
         if (targetType == TypeConst.Error)
         {
+            return TypeConst.Error;
+        }
+
+        if (IsArrayType(targetType))
+        {
+            Report(DiagnosticCodes.TypeMismatch,
+                $"Type '{targetType}' is an array and does not support member access.",
+                memberAccess.Span);
             return TypeConst.Error;
         }
 
@@ -995,6 +1024,140 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
     {
         return TypePromoter.IsIntegerType(type)
                || IsFloatingPointType(type);
+    }
+
+    private string CheckArrayLiteral(ArrayLiteralNode literal, SymbolTable scope, string? expectedType)
+    {
+        string? expectedElementType = null;
+        var expectedLength = -1;
+
+        if (expectedType != null && IsArrayType(expectedType))
+        {
+            ParseArrayType(expectedType, out expectedElementType, out expectedLength);
+        }
+
+        if (literal.Elements.Count == 0)
+        {
+            if (expectedElementType == null)
+            {
+                Report(DiagnosticCodes.TypeMismatch,
+                    "Cannot infer type of empty array literal. Please provide an explicit type.", literal.Span);
+                return TypeConst.Error;
+            }
+
+            return expectedType!;
+        }
+
+        var elementType = expectedElementType;
+        foreach (var element in literal.Elements)
+        {
+            var actualElementType = CheckExpression(element, scope, elementType);
+            if (elementType == null)
+            {
+                if (actualElementType != TypeConst.Error)
+                {
+                    elementType = actualElementType;
+                }
+            }
+            else if (actualElementType != TypeConst.Error && !CanAssign(elementType, actualElementType, element))
+            {
+                Report(DiagnosticCodes.TypeMismatch,
+                    $"Array element type mismatch: expected '{elementType}', but got '{actualElementType}'.",
+                    element.Span);
+            }
+        }
+
+        if (elementType == null || elementType == TypeConst.Error)
+        {
+            return TypeConst.Error;
+        }
+
+        if (expectedLength != -1 && literal.Elements.Count != expectedLength)
+        {
+            Report(DiagnosticCodes.TypeMismatch,
+                $"Array literal length mismatch: expected {expectedLength} elements, but got {literal.Elements.Count}.",
+                literal.Span);
+        }
+
+        return $"{elementType}[{literal.Elements.Count}]";
+    }
+
+    private string CheckIndexExpression(IndexExpressionNode indexExpr, SymbolTable scope)
+    {
+        var targetType = CheckExpression(indexExpr.Target, scope);
+        var indexType = CheckExpression(indexExpr.Index, scope, TypeConst.I32);
+
+        if (targetType == TypeConst.Error || indexType == TypeConst.Error)
+        {
+            return TypeConst.Error;
+        }
+
+        if (!IsArrayType(targetType))
+        {
+            Report(DiagnosticCodes.TypeMismatch, $"Cannot index into non-array type '{targetType}'.",
+                indexExpr.Target.Span);
+            return TypeConst.Error;
+        }
+
+        if (!TypePromoter.IsIntegerType(indexType))
+        {
+            Report(DiagnosticCodes.TypeMismatch, $"Array index must be an integer, but got '{indexType}'.",
+                indexExpr.Index.Span);
+        }
+
+        if (TryGetIntegerConstant(indexExpr.Index, out var indexValue))
+        {
+            ParseArrayType(targetType, out _, out var length);
+            if (indexValue < 0 || indexValue >= length)
+            {
+                Report(DiagnosticCodes.IndexOutOfBounds,
+                    $"Array index '{indexValue}' is out of bounds for array of length {length}.", indexExpr.Index.Span);
+            }
+        }
+
+        ParseArrayType(targetType, out var elementType, out _);
+        return elementType;
+    }
+
+    private bool IsArrayType(string type)
+    {
+        return type.Contains('[') && type.EndsWith(']');
+    }
+
+    private void ParseArrayType(string type, out string elementType, out int length)
+    {
+        var lastBracket = type.LastIndexOf('[');
+        elementType = type.Substring(0, lastBracket);
+        var lengthStr = type.Substring(lastBracket + 1, type.Length - lastBracket - 2);
+        int.TryParse(lengthStr, out length);
+    }
+
+    private void ValidateType(string type, SourceSpan? span)
+    {
+        if (IsArrayType(type))
+        {
+            ParseArrayType(type, out var elementType, out var length);
+            if (length <= 0)
+            {
+                Report(DiagnosticCodes.InvalidArrayLength,
+                    $"Array length must be a positive integer, but got {length}.", span);
+            }
+
+            ValidateType(elementType, span);
+            return;
+        }
+
+        if (TypePromoter.IsIntegerType(type) ||
+            IsFloatingPointType(type) ||
+            type == TypeConst.Bool ||
+            type == TypeConst.Char ||
+            type == TypeConst.Void ||
+            _structs.ContainsKey(type))
+        {
+            return;
+        }
+
+        Report(DiagnosticCodes.TypeMismatch, $"Unknown type '{type}'.", span);
     }
 
 
