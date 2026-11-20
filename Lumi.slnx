@@ -1,11 +1,11 @@
 <Solution>
   <Folder Name="/src/">
-    <Project Path="Lumi.Cli/Lumi.Cli.csproj" />
-    <Project Path="Lumi.Core/Lumi.Core.csproj" />
-    <Project Path="Lumi.LLVM/Lumi.LLVM.csproj" />
+    <Project Path="src/Lumi.Cli/Lumi.Cli.csproj" />
+    <Project Path="src/Lumi.Core/Lumi.Core.csproj" />
+    <Project Path="src/Lumi.LLVM/Lumi.LLVM.csproj" />
   </Folder>
   <Folder Name="/tests/">
-    <Project Path="Lumi.Core.Test/Lumi.Core.Test.csproj" />
-    <Project Path="Lumi.LLVM.Test/Lumi.LLVM.Test.csproj" />
+    <Project Path="tests/Lumi.Core.Test/Lumi.Core.Test.csproj" />
+    <Project Path="tests/Lumi.LLVM.Test/Lumi.LLVM.Test.csproj" />
   </Folder>
 </Solution>

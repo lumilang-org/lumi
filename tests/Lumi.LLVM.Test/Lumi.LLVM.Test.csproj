@@ -8,8 +8,8 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\Lumi.Core\Lumi.Core.csproj"/>
-        <ProjectReference Include="..\Lumi.LLVM\Lumi.LLVM.csproj"/>
+        <ProjectReference Include="..\..\src\Lumi.Core\Lumi.Core.csproj"/>
+        <ProjectReference Include="..\..\src\Lumi.LLVM\Lumi.LLVM.csproj"/>
     </ItemGroup>
 
     <ItemGroup>
