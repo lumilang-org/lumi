@@ -56,10 +56,11 @@ public sealed class Codegen
             foreach (var funcNode in module.Functions)
             {
                 var mangledName = _semanticModel.GetMangledName(funcNode);
-                var returnType = ResolveType(funcNode.ReturnType);
+                var resolvedReturnType = _semanticModel.GetType(funcNode);
+                var returnType = ResolveType(resolvedReturnType);
 
                 var parameterTypes = funcNode.Parameters
-                    .Select(parameter => ResolveType(parameter.Type))
+                    .Select(parameter => ResolveType(_semanticModel.GetType(parameter)))
                     .ToArray();
 
                 var functionType = LLVMTypeRef.CreateFunction(
@@ -93,7 +94,8 @@ public sealed class Codegen
         FunctionDeclarationNode funcNode,
         LLVMValueRef function)
     {
-        _currentReturnType = ResolveType(funcNode.ReturnType);
+        var resolvedReturnType = _semanticModel.GetType(funcNode);
+        _currentReturnType = ResolveType(resolvedReturnType);
 
         var entryBlock = _context.AppendBasicBlock(function, "entry");
         _builder.PositionAtEnd(entryBlock);
@@ -104,7 +106,8 @@ public sealed class Codegen
         for (var i = 0; i < funcNode.Parameters.Count; i++)
         {
             var parameter = funcNode.Parameters[i];
-            var parameterType = ResolveType(parameter.Type);
+            var resolvedType = _semanticModel.GetType(parameter);
+            var parameterType = ResolveType(resolvedType);
 
             var parameterValue = function.GetParam((uint)i);
 
@@ -117,7 +120,7 @@ public sealed class Codegen
             _currentScope.Declare(
                 parameter.Name,
                 new VariableSymbol(
-                    parameter.Type,
+                    resolvedType,
                     parameterType,
                     alloca));
         }
@@ -146,34 +149,35 @@ public sealed class Codegen
         {
             case VariableDeclarationNode varDecl:
             {
-                var declaredType = ResolveType(varDecl.Type);
+                var resolvedType = _semanticModel.GetType(varDecl);
+                var declaredType = ResolveType(resolvedType);
 
                 if (varDecl.Initializer == null)
                 {
                     var alloca = _builder.BuildAlloca(declaredType, varDecl.Name);
-                    _currentScope.Declare(varDecl.Name, new VariableSymbol(varDecl.Type, declaredType, alloca));
+                    _currentScope.Declare(varDecl.Name, new VariableSymbol(resolvedType, declaredType, alloca));
                     break;
                 }
 
-                if (_structLayouts.TryGetValue(varDecl.Type, out var structLayout) &&
+                if (_structLayouts.TryGetValue(resolvedType, out var structLayout) &&
                     varDecl.Initializer is StructLiteralNode structLiteral)
                 {
                     var alloca = _builder.BuildAlloca(structLayout.StructType, varDecl.Name);
                     EmitStructLiteralFields(structLiteral, alloca, structLayout);
                     _currentScope.Declare(
                         varDecl.Name,
-                        new VariableSymbol(varDecl.Type, structLayout.StructType, alloca));
+                        new VariableSymbol(resolvedType, structLayout.StructType, alloca));
                     break;
                 }
 
-                if (varDecl.Type.Contains('[') && varDecl.Initializer is ArrayLiteralNode arrayLiteral)
+                if (resolvedType.Contains('[') && varDecl.Initializer is ArrayLiteralNode arrayLiteral)
                 {
-                    var arrayLlvmType = ResolveType(varDecl.Type);
+                    var arrayLlvmType = ResolveType(resolvedType);
                     var alloca = _builder.BuildAlloca(arrayLlvmType, varDecl.Name);
                     EmitArrayLiteralElements(arrayLiteral, alloca, arrayLlvmType);
                     _currentScope.Declare(
                         varDecl.Name,
-                        new VariableSymbol(varDecl.Type, arrayLlvmType, alloca));
+                        new VariableSymbol(resolvedType, arrayLlvmType, alloca));
                     break;
                 }
 
@@ -183,12 +187,12 @@ public sealed class Codegen
                     initializer,
                     varDecl.Initializer,
                     declaredType,
-                    varDecl.Type,
+                    resolvedType,
                     $"init_{varDecl.Name}");
 
                 var scalarAlloca = _builder.BuildAlloca(declaredType, varDecl.Name);
                 _builder.BuildStore(initializer, scalarAlloca);
-                _currentScope.Declare(varDecl.Name, new VariableSymbol(varDecl.Type, declaredType, scalarAlloca));
+                _currentScope.Declare(varDecl.Name, new VariableSymbol(resolvedType, declaredType, scalarAlloca));
 
                 break;
             }

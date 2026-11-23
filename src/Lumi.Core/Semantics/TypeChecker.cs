@@ -25,8 +25,9 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         foreach (var parameter in func.Parameters)
         {
             ValidateType(parameter.Type, parameter.Span);
-            SemanticModel.SetType(parameter, parameter.Type);
-            if (!scope.TryDeclare(parameter.Name, parameter.Type))
+            var resolvedType = ResolveType(parameter.Type);
+            SemanticModel.SetType(parameter, resolvedType);
+            if (!scope.TryDeclare(parameter.Name, resolvedType))
             {
                 Report(
                     DiagnosticCodes.DuplicateVariable,
@@ -54,7 +55,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         _structs.Clear();
         Functions.Clear(); // Assuming I add a Clear method to FunctionRegistry or handle it here
 
-        // 1. Pass: Register all modules and their symbols (mangled)
+        // 1. Pass: Register all structs (mangled) across all modules
         foreach (var module in modules)
         {
             var modulePrefix = module.Module != null ? string.Join("::", module.Module.PathSegments) : "";
@@ -70,14 +71,22 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
                 SemanticModel.SetMangledName(structDecl, mangledName);
             }
+        }
+
+        // 2. Pass: Register all function signatures (mangled) with resolved types
+        foreach (var module in modules)
+        {
+            var modulePrefix = module.Module != null ? string.Join("::", module.Module.PathSegments) : "";
+            _currentModulePrefix = modulePrefix;
+            _currentImports = module.Imports;
 
             foreach (var func in module.Functions)
             {
                 var mangledName = func.Name == "main" ? "main" : MangleName(modulePrefix, func.Name);
                 var signature = new FunctionSignature(
                     mangledName,
-                    func.Parameters.Select(p => p.Type).ToArray(),
-                    func.ReturnType);
+                    func.Parameters.Select(p => ResolveType(p.Type)).ToArray(),
+                    ResolveType(func.ReturnType));
 
                 if (!Functions.TryRegister(signature))
                 {
@@ -85,11 +94,12 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                         func.Span);
                 }
 
+                SemanticModel.SetType(func, ResolveType(func.ReturnType));
                 SemanticModel.SetMangledName(func, mangledName);
             }
         }
 
-        // 2. Pass: Check bodies with cross-module resolution
+        // 3. Pass: Check bodies with cross-module resolution
         foreach (var module in modules)
         {
             var modulePrefix = module.Module != null ? string.Join("::", module.Module.PathSegments) : "";
@@ -182,35 +192,37 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             case VariableDeclarationNode varDecl:
 
                 ValidateType(varDecl.Type, varDecl.Span);
+                var resolvedVarType = ResolveType(varDecl.Type);
+                SemanticModel.SetType(varDecl, resolvedVarType);
 
                 if (varDecl.Initializer != null)
                 {
                     var initializerType = CheckExpression(
                         varDecl.Initializer,
                         scope,
-                        varDecl.Type);
+                        resolvedVarType);
 
                     EnsureValueExpression(
                         varDecl.Initializer,
                         initializerType);
 
-                    if (varDecl.Type.StartsWith('u') &&
+                    if (resolvedVarType.StartsWith('u') &&
                         varDecl.Initializer is UnaryExpressionNode { Operator: "-" })
                     {
                         Report(DiagnosticCodes.TypeMismatch,
-                            $"Cannot assign a negative value to unsigned type '{varDecl.Type}'.",
+                            $"Cannot assign a negative value to unsigned type '{resolvedVarType}'.",
                             varDecl.Initializer.Span);
                     }
 
-                    if (!CanAssign(varDecl.Type, initializerType, varDecl.Initializer))
+                    if (!CanAssign(resolvedVarType, initializerType, varDecl.Initializer))
                     {
                         Report(DiagnosticCodes.TypeMismatch,
-                            $"Cannot assign type '{initializerType}' to a variable of type '{varDecl.Type}'.",
+                            $"Cannot assign type '{initializerType}' to a variable of type '{resolvedVarType}'.",
                             varDecl.Initializer.Span);
                     }
                 }
 
-                if (!scope.TryDeclare(varDecl.Name, varDecl.Type))
+                if (!scope.TryDeclare(varDecl.Name, resolvedVarType))
                 {
                     Report(
                         DiagnosticCodes.DuplicateVariable,
@@ -606,7 +618,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             }
         }
 
-        return literal.StructName;
+        return resolvedName;
     }
 
     private string CheckMemberAccess(
@@ -645,7 +657,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             return TypeConst.Error;
         }
 
-        return field.Type;
+        return ResolveType(field.Type);
     }
 
     private string CheckIdentifier(IdentifierNode identifier, SymbolTable scope)
@@ -1263,6 +1275,27 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         }
 
         Report(DiagnosticCodes.TypeMismatch, $"Unknown type '{type}'.", span);
+    }
+
+    private string ResolveType(string type)
+    {
+        if (IsArrayType(type))
+        {
+            ParseArrayType(type, out var elementType, out var length);
+            return $"{ResolveType(elementType)}[{length}]";
+        }
+
+        if (TypePromoter.IsIntegerType(type) ||
+            IsFloatingPointType(type) ||
+            type == TypeConst.Bool ||
+            type == TypeConst.Char ||
+            type == TypeConst.Void ||
+            type == TypeConst.Error)
+        {
+            return type;
+        }
+
+        return ResolveSymbolName(type);
     }
 
 
