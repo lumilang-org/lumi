@@ -387,4 +387,114 @@ func main() -> void { byte x = 255 u8 y = x byte z = y byte[2] arr = [1, 2] }");
         Assert.That(program.Functions[0].ReturnType, Is.EqualTo("u8"));
         Assert.That(overflow.HasErrors, Is.True);
     }
+
+    [TestCase("i8")]
+    [TestCase("i16")]
+    [TestCase("i32")]
+    [TestCase("i64")]
+    [TestCase("u8")]
+    [TestCase("u16")]
+    [TestCase("u32")]
+    [TestCase("u64")]
+    [TestCase("byte")]
+    public void Check_Update_OnIntegerTypes_KeepsOperandType(string type)
+    {
+        var expected = type == "byte" ? "u8" : type;
+        var (program, model, diagnostics) = Check(
+            $"func main() -> void {{ {type} x = 1 {type} a = x++ {type} b = --x }}");
+
+        Assert.That(diagnostics.HasErrors, Is.False);
+        var a = (VariableDeclarationNode)program.Functions[0].Body[1];
+        var b = (VariableDeclarationNode)program.Functions[0].Body[2];
+        Assert.That(model.GetExpressionType(a.Initializer!), Is.EqualTo(expected));
+        Assert.That(model.GetExpressionType(b.Initializer!), Is.EqualTo(expected));
+    }
+
+    [Test]
+    public void Check_Update_ValidTargets()
+    {
+        var (_, _, diagnostics) = Check(@"
+struct Inner { i32 n }
+struct Outer { Inner inner }
+func bump(i32 p) -> void {
+    p++
+    ++p
+}
+func main() -> void {
+    i32[3] arr = [1, 2, 3]
+    Outer o = Outer { inner: Inner { n: 1 } }
+    Inner[2] items = [Inner { n: 1 }, Inner { n: 2 }]
+    arr[1]++
+    --arr[0]
+    o.inner.n++
+    items[1].n--
+    for i32 i = 0; i < 3; i++ { }
+}");
+
+        Assert.That(diagnostics.Diagnostics.Select(DiagnosticFormatter.Format), Is.Empty);
+    }
+
+    [Test]
+    public void Check_Update_RejectsNonLvalues_WithFileAwareDiagnostic()
+    {
+        var sources = new[]
+        {
+            "func main() -> void { 1++ }",
+            "func main() -> void { i32 x = 1 (x + 1)++ }",
+            "func main() -> void { i32 x = 1\n --(x + 1) }",
+            "func f() -> i32 { return 1 }\nfunc main() -> void { f()++ }",
+            "func main() -> void { i32 x = 1\n ++(x++) }"
+        };
+
+        foreach (var source in sources)
+        {
+            var (_, _, diagnostics) = Check(source);
+
+            Assert.That(CountCode(diagnostics, DiagnosticCodes.InvalidUpdateTarget), Is.EqualTo(1), source);
+            var diagnostic = diagnostics.Diagnostics.First(d => d.Code == DiagnosticCodes.InvalidUpdateTarget);
+            Assert.That(diagnostic.FileName, Is.EqualTo("test.lumi"));
+            Assert.That(diagnostic.Span, Is.Not.Null);
+        }
+    }
+
+    [Test]
+    public void Check_Update_RejectsNonIntegerTypes()
+    {
+        var sources = new[]
+        {
+            "func main() -> void { bool b = true b++ }",
+            "func main() -> void { string s = \"a\"\n ++s }",
+            "func main() -> void { char c = 'a' c++ }",
+            "func main() -> void { f32 f = 1.5 f-- }",
+            "struct P { i32 x }\nfunc main() -> void { P p = P { x: 1 } p++ }",
+            "func main() -> void { i32[2] a = [1, 2] a++ }"
+        };
+
+        foreach (var source in sources)
+        {
+            var (_, _, diagnostics) = Check(source);
+
+            Assert.That(CountCode(diagnostics, DiagnosticCodes.InvalidOperator), Is.EqualTo(1), source);
+        }
+    }
+
+    [Test]
+    public void Check_Update_RejectsStringElementsAndUndefinedNames()
+    {
+        var (_, _, stringElement) = Check("func main() -> void { string s = \"abc\" s[0]++ }");
+        var (_, _, undefined) = Check("func main() -> void { missing++ }");
+
+        Assert.That(CountCode(stringElement, DiagnosticCodes.InvalidUpdateTarget), Is.EqualTo(1));
+        Assert.That(CountCode(undefined, DiagnosticCodes.UndefinedVariable), Is.EqualTo(1));
+    }
+
+    [Test]
+    public void Check_Update_ResultTypeFollowsAssignmentRules()
+    {
+        var (_, _, widening) = Check("func main() -> void { i32 x = 1 i64 y = x++ }");
+        var (_, _, ok) = Check("func main() -> void { i32 x = 1 i32 y = x++ + ++x }");
+
+        Assert.That(CountCode(widening, DiagnosticCodes.TypeMismatch), Is.EqualTo(1));
+        Assert.That(ok.HasErrors, Is.False);
+    }
 }

@@ -259,4 +259,33 @@ public class LexerTests
 
         Assert.That(lexer.NextToken().Value, Is.EqualTo("x"));
     }
+
+    [Test]
+    public void NextToken_IncrementAndDecrement_AreSingleTokens()
+    {
+        var lexer = new Lexer("++ -- + - +  + - -> a+++b", new DiagnosticBag(), "test.lumi");
+
+        var types = new List<TokenType>();
+        Token token;
+        while ((token = lexer.NextToken()).Type != TokenType.EndOfFile)
+        {
+            types.Add(token.Type);
+        }
+
+        Assert.That(types, Is.EqualTo(new[]
+        {
+            TokenType.PlusPlus, TokenType.MinusMinus, TokenType.Plus, TokenType.Minus,
+            TokenType.Plus, TokenType.Plus, TokenType.Minus, TokenType.Arrow,
+            TokenType.Identifier, TokenType.PlusPlus, TokenType.Plus, TokenType.Identifier
+        }));
+    }
+
+    [Test]
+    public void NextToken_IncrementAndDecrement_CarryOperatorText()
+    {
+        var lexer = new Lexer("++ --", new DiagnosticBag(), "test.lumi");
+
+        Assert.That(lexer.NextToken().Value, Is.EqualTo("++"));
+        Assert.That(lexer.NextToken().Value, Is.EqualTo("--"));
+    }
 }

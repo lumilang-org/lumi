@@ -32,6 +32,7 @@ public static class DiagnosticCodes
     public const string InvalidShiftAmount = "LUMI1010";
     public const string InvalidArrayLength = "LUMI1011";
     public const string IndexOutOfBounds = "LUMI1012";
+    public const string InvalidUpdateTarget = "LUMI1013";
     public const string CircularImport = "LUMI5001";
     public const string ModuleNotFound = "LUMI5002";
 

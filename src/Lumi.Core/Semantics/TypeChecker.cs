@@ -552,6 +552,9 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             UnaryExpressionNode unary =>
                 CheckUnaryExpression(unary, scope),
 
+            UpdateExpressionNode update =>
+                CheckUpdateExpression(update, scope),
+
             LiteralNode<char> _ => TypeConst.Char,
             StringLiteralNode _ => TypeConst.String,
             LiteralNode<bool> _ => TypeConst.Bool,
@@ -838,6 +841,56 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                 DiagnosticCodes.InvalidOperator,
                 $"Unsupported unary operator: '{unary.Operator}'.",
                 unary.Span)
+        };
+    }
+
+    // ++/-- need an integer variable, struct field or array element to write back to.
+    // Every variable is mutable in Lumi; string elements are the only immutable lvalues.
+    private string CheckUpdateExpression(UpdateExpressionNode update, SymbolTable scope)
+    {
+        var targetType = CheckExpression(update.Target, scope);
+
+        if (!IsUpdateTarget(update.Target))
+        {
+            Report(DiagnosticCodes.InvalidUpdateTarget,
+                $"The operand of '{update.Operator}' must be a variable, struct field or array element.",
+                update.Target.Span);
+            return TypeConst.Error;
+        }
+
+        if (targetType == TypeConst.Error)
+        {
+            return TypeConst.Error;
+        }
+
+        if (update.Target is IndexExpressionNode { Target: var indexed }
+            && SemanticModel.GetExpressionType(indexed) == TypeConst.String)
+        {
+            Report(DiagnosticCodes.InvalidUpdateTarget,
+                $"Strings are immutable; a string element cannot be modified with '{update.Operator}'.",
+                update.Target.Span);
+            return TypeConst.Error;
+        }
+
+        if (!TypePromoter.IsIntegerType(targetType))
+        {
+            Report(DiagnosticCodes.InvalidOperator,
+                $"Type Mismatch: Operator '{update.Operator}' requires an integer operand, but got '{targetType}'.",
+                update.Target.Span);
+            return TypeConst.Error;
+        }
+
+        return targetType;
+    }
+
+    private static bool IsUpdateTarget(ExpressionNode expression)
+    {
+        return expression switch
+        {
+            IdentifierNode => true,
+            MemberAccessNode member => IsUpdateTarget(member.Target),
+            IndexExpressionNode index => IsUpdateTarget(index.Target),
+            _ => false
         };
     }
 

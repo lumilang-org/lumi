@@ -40,9 +40,11 @@ public enum TokenType
 
     Assign,
     Plus,
+    PlusPlus,
     Star,
     Slash,
     Minus,
+    MinusMinus,
     Arrow,
     Comma,
     Dot,

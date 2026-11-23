@@ -24,6 +24,8 @@ public static class TypeConst
     public const string String = "string";
     public const string Plus = "+";
     public const string Minus = "-";
+    public const string Increment = "++";
+    public const string Decrement = "--";
     public const string Star = "*";
     public const string Slash = "/";
     public const string Func = "func";

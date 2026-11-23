@@ -161,6 +161,27 @@ func logMessage() -> void {
 | **Bitwise** | `&`, `\|`, `^` | Bitwise AND, OR, XOR on integers |
 | **Shift** | `<<`, `>>` | Left shift and arithmetic/logical right shift |
 
+### 6.3 Increment and Decrement
+
+`++` and `--` add or subtract 1 and store the result back. They work as a prefix or postfix operator, as a statement, or inside a larger expression:
+
+| Form | Value of the expression |
+| :--- | :--- |
+| `++x`, `--x` | The **new** value |
+| `x++`, `x--` | The **previous** value |
+
+```text
+i32 i = 5
+i32 a = i++      // a = 5, i = 6
+i32 b = ++i      // b = 7, i = 7
+for i32 j = 0; j < 3; j++ { }
+counts[idx++]--  // idx is evaluated once
+```
+
+* **Operand:** must be an integer (`i8`..`i64`, `u8`..`u64`, `byte`) held in a variable, parameter, struct field or array element (`x`, `p.x`, `arr[i]`, `arr[i].n`). Literals, calls and parenthesised expressions (`1++`, `(x + 1)++`, `f()++`) are rejected, as are `bool`, `char`, `string`, floats, structs and arrays. Every variable is mutable; string elements (`s[i]++`) are not.
+* **Type:** the expression has the operand's type. Unsigned and fixed-width values wrap on overflow.
+* **Line rule:** statements have no terminator, so `++`/`--` directly after an operand **on the same line** is always the postfix operator. Start a prefix update on its own line, for example `x = 1` followed by a new line `++y`.
+
 ---
 
 ## 7. Control Flow

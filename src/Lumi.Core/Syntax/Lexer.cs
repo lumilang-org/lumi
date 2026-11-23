@@ -296,8 +296,17 @@ public sealed class Lexer
                 return CreateToken(TokenType.GreaterThan, ">", start);
 
             case '+':
+            {
                 Advance();
+
+                if (_currentChar == '+')
+                {
+                    Advance();
+                    return CreateToken(TokenType.PlusPlus, TypeConst.Increment, start);
+                }
+
                 return CreateToken(TokenType.Plus, "+", start);
+            }
 
             case '*':
                 Advance();
@@ -316,6 +325,13 @@ public sealed class Lexer
                 }
 
                 Advance();
+
+                if (_currentChar == '-')
+                {
+                    Advance();
+                    return CreateToken(TokenType.MinusMinus, TypeConst.Decrement, start);
+                }
+
                 return CreateToken(TokenType.Minus, "-", start);
 
             case ',':
@@ -443,13 +459,6 @@ public sealed class Lexer
         return CreateToken(TokenType.Character, value.ToString(), start);
     }
 
-    private enum EscapeResult
-    {
-        Valid,
-        Invalid,
-        EndOfLine
-    }
-
     // The current character must be the backslash. Consumes the whole escape sequence.
     private EscapeResult TryReadEscape(out char value)
     {
@@ -468,13 +477,27 @@ public sealed class Lexer
 
         switch (escaped)
         {
-            case 'n': value = '\n'; return EscapeResult.Valid;
-            case 'r': value = '\r'; return EscapeResult.Valid;
-            case 't': value = '\t'; return EscapeResult.Valid;
-            case '\\': value = '\\'; return EscapeResult.Valid;
-            case '\'': value = '\''; return EscapeResult.Valid;
-            case '"': value = '"'; return EscapeResult.Valid;
-            case '0': value = '\0'; return EscapeResult.Valid;
+            case 'n':
+                value = '\n';
+                return EscapeResult.Valid;
+            case 'r':
+                value = '\r';
+                return EscapeResult.Valid;
+            case 't':
+                value = '\t';
+                return EscapeResult.Valid;
+            case '\\':
+                value = '\\';
+                return EscapeResult.Valid;
+            case '\'':
+                value = '\'';
+                return EscapeResult.Valid;
+            case '"':
+                value = '"';
+                return EscapeResult.Valid;
+            case '0':
+                value = '\0';
+                return EscapeResult.Valid;
             default:
                 _diagnostics.Report(
                     _fileName,
@@ -571,5 +594,12 @@ public sealed class Lexer
             type,
             value,
             new SourceSpan(start, end));
+    }
+
+    private enum EscapeResult
+    {
+        Valid,
+        Invalid,
+        EndOfLine
     }
 }

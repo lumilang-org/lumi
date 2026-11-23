@@ -680,6 +680,7 @@ public sealed class Codegen
             IdentifierNode id => LoadVariable(id.Name),
             BinaryExpressionNode binary => GenerateBinary(binary),
             UnaryExpressionNode unary => GenerateUnary(unary),
+            UpdateExpressionNode update => GenerateUpdate(update),
             LiteralNode<char> character => LLVMValueRef.CreateConstInt(_context.Int8Type, character.Value),
             StringLiteralNode str => GenerateStringLiteral(str),
             LiteralNode<bool> boolean => LLVMValueRef.CreateConstInt(_context.Int1Type, (ulong)(boolean.Value ? 1 : 0)),
@@ -848,6 +849,24 @@ public sealed class Codegen
             functionInfo.Function,
             arguments,
             name);
+    }
+
+    // ++/--: resolve the address once, load, add/subtract 1, store back. A prefix update
+    // yields the new value and a postfix update the previous one; statements ignore it.
+    private LLVMValueRef GenerateUpdate(UpdateExpressionNode update)
+    {
+        var (address, _, valueType) = ResolveTargetAddress(update.Target);
+
+        var current = _builder.BuildLoad2(valueType, address, "update.old");
+        var one = LLVMValueRef.CreateConstInt(valueType, 1);
+
+        var updated = update.Operator == TypeConst.Increment
+            ? _builder.BuildAdd(current, one, "update.inc")
+            : _builder.BuildSub(current, one, "update.dec");
+
+        _builder.BuildStore(updated, address);
+
+        return update.IsPrefix ? updated : current;
     }
 
     private LLVMValueRef GenerateUnary(UnaryExpressionNode unary)

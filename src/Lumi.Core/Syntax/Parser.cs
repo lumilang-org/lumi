@@ -585,7 +585,9 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         {
             initializer = IsVariableDeclaration()
                 ? ParseVariableDeclaration()
-                : ParseAssignmentStatement();
+                : Current.Type == TokenType.Identifier && Next.Type == TokenType.Assign
+                    ? ParseAssignmentStatement()
+                    : ParseExpressionStatement();
         }
 
         Consume(TokenType.Semicolon);
@@ -725,6 +727,15 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
                 continue;
             }
 
+            // Postfix ++/-- must start on the line of its operand, otherwise it is the
+            // prefix operator of the next statement (statements have no terminator).
+            if (Current.Type is TokenType.PlusPlus or TokenType.MinusMinus &&
+                Current.Span.Start.Line == Peek(-1).Span.End.Line)
+            {
+                leftExpr = ParsePostfixUpdate(leftExpr);
+                continue;
+            }
+
             if (Current.Type == TokenType.LBracket)
             {
                 if (precedence >= Precedence.Postfix)
@@ -800,6 +811,9 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
                 return ParseBooleanLiteral();
             case TokenType.LParen:
                 return ParseGroupedExpression();
+            case TokenType.PlusPlus:
+            case TokenType.MinusMinus:
+                return ParsePrefixUpdate();
             case TokenType.LogicalNot:
             case TokenType.BitwiseNot:
             case TokenType.LeftShift:
@@ -868,6 +882,29 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         Advance();
 
         return new StringLiteralNode(token.Value, token.Span);
+    }
+
+    private ExpressionNode ParsePrefixUpdate()
+    {
+        var operatorToken = Current;
+        Advance();
+
+        // Binds tighter than any binary operator, but still allows a.b / a[i] operands.
+        var target = ParseExpression(Precedence.Prefix);
+
+        var span = CreateSpan(operatorToken.Span.Start, target.Span.End);
+
+        return new UpdateExpressionNode(operatorToken.Value, target, true, span);
+    }
+
+    private ExpressionNode ParsePostfixUpdate(ExpressionNode target)
+    {
+        var operatorToken = Current;
+        Advance();
+
+        var span = CreateSpan(target.Span.Start, operatorToken.Span.End);
+
+        return new UpdateExpressionNode(operatorToken.Value, target, false, span);
     }
 
     private ExpressionNode ParseUnaryExpression()
@@ -958,7 +995,11 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             name += "::" + Consume(TokenType.Identifier).Value;
         }
 
-        if (Current.Type == TokenType.LBrace)
+        // `Name {` only starts a struct literal when followed by `field:`, so
+        // `for ...; ++i { }` and `if flag { ... }` still open a block.
+        if (Current.Type == TokenType.LBrace &&
+            Peek(1).Type == TokenType.Identifier &&
+            Peek(2).Type == TokenType.Colon)
         {
             return ParseStructLiteral(startToken with { Value = name });
         }
@@ -1045,6 +1086,12 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
     {
         var start = Current.Span.Start;
         var target = ParseExpression();
+
+        // `arr[0]++` / `p.x--` start like an assignment target but are plain statements.
+        if (target is UpdateExpressionNode)
+        {
+            return new ExpressionStatementNode(target, target.Span);
+        }
 
         Consume(TokenType.Assign);
 
