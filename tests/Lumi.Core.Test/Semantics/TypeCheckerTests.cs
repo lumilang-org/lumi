@@ -374,4 +374,17 @@ func main() -> void {
         Assert.That(CountCode(withChar, DiagnosticCodes.TypeMismatch), Is.GreaterThan(0));
         Assert.That(CountCode(intWithString, DiagnosticCodes.TypeMismatch), Is.GreaterThan(0));
     }
+
+    [Test]
+    public void Check_Byte_IsAliasOfU8()
+    {
+        var (program, _, diagnostics) = Check(@"
+func inc(byte b) -> byte { return b + 1 }
+func main() -> void { byte x = 255 u8 y = x byte z = y byte[2] arr = [1, 2] }");
+        var (_, _, overflow) = Check("func main() -> void { byte x = 256 }");
+
+        Assert.That(diagnostics.HasErrors, Is.False);
+        Assert.That(program.Functions[0].ReturnType, Is.EqualTo("u8"));
+        Assert.That(overflow.HasErrors, Is.True);
+    }
 }

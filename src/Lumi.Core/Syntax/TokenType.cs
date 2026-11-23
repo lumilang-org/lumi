@@ -15,7 +15,6 @@ public enum TokenType
     KeywordModule,
     PrintFunc,
 
-    TypeByte,
     TypeBool,
     TypeVoid,
     TypeChar,

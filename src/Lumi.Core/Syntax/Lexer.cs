@@ -27,7 +27,6 @@ public sealed class Lexer
         { TypeConst.U16, TokenType.TypeU16 },
         { TypeConst.U32, TokenType.TypeU32 },
         { TypeConst.U64, TokenType.TypeU64 },
-        { "byte", TokenType.TypeByte },
         { TypeConst.Bool, TokenType.TypeBool },
         { TypeConst.Void, TokenType.TypeVoid },
         { TypeConst.F16, TokenType.TypeF16 },
@@ -156,6 +155,12 @@ public sealed class Lexer
         if (value is TypeConst.True or TypeConst.False)
         {
             return CreateToken(TokenType.BooleanLiteral, value, start);
+        }
+
+        // `byte` is an alias: downstream stages only ever see `u8`.
+        if (value == TypeConst.Byte)
+        {
+            return CreateToken(TokenType.TypeU8, TypeConst.U8, start);
         }
 
         if (Keywords.TryGetValue(value, out var matchedType))

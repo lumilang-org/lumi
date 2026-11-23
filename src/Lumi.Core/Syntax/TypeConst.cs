@@ -10,6 +10,7 @@ public static class TypeConst
     public const string I32 = "i32";
     public const string I64 = "i64";
     public const string U8 = "u8";
+    public const string Byte = "byte"; // alias of u8
     public const string U16 = "u16";
     public const string U32 = "u32";
     public const string U64 = "u64";

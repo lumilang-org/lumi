@@ -18,6 +18,7 @@ Lumi is a statically typed systems programming language designed around explicit
 
 | Type Name | Category | Description / Size |
 | :--- | :--- | :--- |
+| `byte` | Unsigned Integer | Alias of `u8` |
 | `i8`, `i16`, `i32`, `i64` | Signed Integer | Fixed-width 2's complement integers (8 to 64 bits) |
 | `u8`, `u16`, `u32`, `u64` | Unsigned Integer | Fixed-width unsigned integers (8 to 64 bits) |
 | `f16`, `f32`, `f64` | Floating Point | IEEE 754 half, single, and double precision floats |
