@@ -8,7 +8,18 @@ public sealed class SemanticModel
 {
     private readonly Dictionary<ASTNode, string> _mangledNames = new();
     private readonly Dictionary<ASTNode, string> _nodeTypes = new();
+    private readonly HashSet<ASTNode> _builtinCalls = new();
     public FunctionRegistry Functions { get; } = new();
+
+    public void MarkBuiltinCall(FunctionCallExpressionNode call)
+    {
+        _builtinCalls.Add(call);
+    }
+
+    public bool IsBuiltinCall(FunctionCallExpressionNode call)
+    {
+        return _builtinCalls.Contains(call);
+    }
 
     public void SetType(ASTNode node, string type)
     {
