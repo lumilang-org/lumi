@@ -4,7 +4,7 @@ using Lumi.Core.Diagnostics;
 
 namespace Lumi.Core.Syntax;
 
-public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostics)
+public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostics, string fileName)
 {
     private int _position;
 
@@ -196,7 +196,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
         var span = CreateSpan(startSpan.Start, endSpan.End);
 
-        return new ProgramNode(module, imports, functions, structs, span);
+        return new ProgramNode(module, imports, functions, structs, span, fileName);
     }
 
     private ModuleDeclarationNode ParseModuleDeclaration()
@@ -1050,6 +1050,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
     {
         diagnostics.Report(
             new Diagnostic(
+                fileName,
                 code,
                 DiagnosticSeverity.Error,
                 message,

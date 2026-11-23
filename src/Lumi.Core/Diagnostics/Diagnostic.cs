@@ -8,6 +8,7 @@ public enum DiagnosticSeverity
 }
 
 public sealed record Diagnostic(
+    string FileName,
     string Code,
     DiagnosticSeverity Severity,
     string Message,

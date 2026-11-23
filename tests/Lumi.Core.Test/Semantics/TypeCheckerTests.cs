@@ -20,7 +20,7 @@ public class TypeCheckerTests
         } while (token.Type != TokenType.EndOfFile);
 
         var diagnostics = new DiagnosticBag();
-        var parser = new Parser(tokens, diagnostics);
+        var parser = new Parser(tokens, diagnostics, "test.lumi");
         var program = parser.ParseProgram();
 
         var typeChecker = new TypeChecker(diagnostics);

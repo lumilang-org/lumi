@@ -7,6 +7,9 @@
 ##
 ## Get latest from https://github.com/github/gitignore/blob/main/VisualStudio.gitignore
 
+#lumi files for now
+*.lumi
+
 # User-specific files
 *.rsuser
 *.suo

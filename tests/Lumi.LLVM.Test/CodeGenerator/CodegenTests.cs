@@ -19,7 +19,7 @@ public class CodegenTests
         } while (token.Type != TokenType.EndOfFile);
 
         var diagnostics = new DiagnosticBag();
-        var parser = new Parser(tokens, diagnostics);
+        var parser = new Parser(tokens, diagnostics, "test.lumi");
         var program = parser.ParseProgram();
 
         var typeChecker = new TypeChecker(diagnostics);
@@ -55,7 +55,7 @@ public class CodegenTests
         } while (token.Type != TokenType.EndOfFile);
 
         var diagnostics = new DiagnosticBag();
-        var parser = new Parser(tokens, diagnostics);
+        var parser = new Parser(tokens, diagnostics, "test.lumi");
         var program = parser.ParseProgram();
         var typeChecker = new TypeChecker(diagnostics);
         typeChecker.CheckProgram(program);
@@ -85,7 +85,7 @@ public class CodegenTests
         } while (token.Type != TokenType.EndOfFile);
 
         var diagnostics = new DiagnosticBag();
-        var parser = new Parser(tokens, diagnostics);
+        var parser = new Parser(tokens, diagnostics, "test.lumi");
         var program = parser.ParseProgram();
         var typeChecker = new TypeChecker(diagnostics);
         typeChecker.CheckProgram(program);
@@ -117,7 +117,7 @@ public class CodegenTests
         } while (token.Type != TokenType.EndOfFile);
 
         var diagnostics = new DiagnosticBag();
-        var parser = new Parser(tokens, diagnostics);
+        var parser = new Parser(tokens, diagnostics, "test.lumi");
         var program = parser.ParseProgram();
         var typeChecker = new TypeChecker(diagnostics);
         typeChecker.CheckProgram(program);
@@ -146,7 +146,7 @@ public class CodegenTests
         } while (token.Type != TokenType.EndOfFile);
 
         var diagnostics = new DiagnosticBag();
-        var parser = new Parser(tokens, diagnostics);
+        var parser = new Parser(tokens, diagnostics, "test.lumi");
         var program = parser.ParseProgram();
         var typeChecker = new TypeChecker(diagnostics);
         typeChecker.CheckProgram(program);

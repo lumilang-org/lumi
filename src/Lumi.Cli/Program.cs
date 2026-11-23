@@ -18,8 +18,6 @@ var sourceCodePath = args.Length > 0
         Directory.GetCurrentDirectory(),
         "main.lumi");
 
-var lumiCode = File.ReadAllText(sourceCodePath);
-
 Console.WriteLine("--- Initialising Lumi Lexer ---");
 
 var diagnostics = new DiagnosticBag();

@@ -13,6 +13,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
     private readonly Dictionary<string, StructDeclarationNode> _structs = new();
     private IReadOnlyList<ImportDeclarationNode> _currentImports = [];
 
+    private string _currentFile = "<unknown>";
     private string _currentModulePrefix = "";
     private int _loopDepth;
     public SemanticModel SemanticModel { get; } = new();
@@ -59,6 +60,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         foreach (var module in modules)
         {
             var modulePrefix = module.Module != null ? string.Join("::", module.Module.PathSegments) : "";
+            _currentFile = module.FileName;
 
             foreach (var structDecl in module.Structs)
             {
@@ -77,6 +79,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         foreach (var module in modules)
         {
             var modulePrefix = module.Module != null ? string.Join("::", module.Module.PathSegments) : "";
+            _currentFile = module.FileName;
             _currentModulePrefix = modulePrefix;
             _currentImports = module.Imports;
 
@@ -103,6 +106,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         foreach (var module in modules)
         {
             var modulePrefix = module.Module != null ? string.Join("::", module.Module.PathSegments) : "";
+            _currentFile = module.FileName;
             _currentModulePrefix = modulePrefix;
             _currentImports = module.Imports;
 
@@ -1418,6 +1422,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         SourceSpan? span)
     {
         diagnostic.Report(new Diagnostic(
+            _currentFile,
             code,
             DiagnosticSeverity.Error,
             message,

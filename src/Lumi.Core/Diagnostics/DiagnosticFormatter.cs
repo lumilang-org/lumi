@@ -6,14 +6,16 @@ public static class DiagnosticFormatter
     {
         var severity = diagnostic.Severity.ToString().ToLowerInvariant();
 
+        var file = diagnostic.FileName;
+
         if (diagnostic.Span is null)
         {
-            return $"{severity} {diagnostic.Code}: {diagnostic.Message}";
+            return $"{file}: {severity} {diagnostic.Code}: {diagnostic.Message}";
         }
 
         var location = diagnostic.Span.Start;
 
-        return $"{location.Line}:{location.Column}: " +
+        return $"{file}:{location.Line}:{location.Column}: " +
                $"{severity} {diagnostic.Code}: {diagnostic.Message}";
     }
 }

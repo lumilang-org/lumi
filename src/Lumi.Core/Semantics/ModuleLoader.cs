@@ -24,15 +24,14 @@ public sealed class ModuleLoader(DiagnosticBag diagnostics)
             return;
         }
 
-        if (_inProgress.Contains(filePath))
+        if (!_inProgress.Add(filePath))
         {
             diagnostics.Report(
+                filePath,
                 DiagnosticCodes.CircularImport,
                 $"Circular dependency detected involving file: {filePath}");
             return;
         }
-
-        _inProgress.Add(filePath);
 
         string source;
         try
@@ -42,6 +41,7 @@ public sealed class ModuleLoader(DiagnosticBag diagnostics)
         catch (Exception)
         {
             diagnostics.Report(
+                filePath,
                 DiagnosticCodes.ModuleNotFound,
                 $"Could not read file: {filePath}");
             _inProgress.Remove(filePath);
@@ -50,7 +50,7 @@ public sealed class ModuleLoader(DiagnosticBag diagnostics)
 
         var lexer = new Lexer(source);
         var tokens = lexer.Tokenize();
-        var parser = new Parser(tokens, diagnostics);
+        var parser = new Parser(tokens, diagnostics, filePath);
         var program = parser.ParseProgram();
 
         foreach (var import in program.Imports)
@@ -95,6 +95,7 @@ public sealed class ModuleLoader(DiagnosticBag diagnostics)
         }
 
         diagnostics.Report(
+            currentFilePath,
             DiagnosticCodes.ModuleNotFound,
             $"Could not find module '{string.Join("::", import.PathSegments)}'",
             import.Span);
