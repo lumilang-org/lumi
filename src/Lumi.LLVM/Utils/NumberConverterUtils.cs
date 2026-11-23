@@ -1,5 +1,6 @@
 using LLVMSharp.Interop;
 using Lumi.Core.Ast;
+using Lumi.Core.Ast.Expressions;
 
 namespace Lumi.LLVM.Utils;
 

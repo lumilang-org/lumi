@@ -1,4 +1,7 @@
 using Lumi.Core.Ast;
+using Lumi.Core.Ast.Statements;
+using Lumi.Core.Ast.Declarations;
+using Lumi.Core.Ast.Expressions;
 using Lumi.Core.Diagnostics;
 using Lumi.Core.Syntax;
 

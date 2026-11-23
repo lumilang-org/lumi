@@ -1,5 +1,8 @@
 using LLVMSharp.Interop;
 using Lumi.Core.Ast;
+using Lumi.Core.Ast.Statements;
+using Lumi.Core.Ast.Declarations;
+using Lumi.Core.Ast.Expressions;
 using Lumi.Core.Semantics;
 using Lumi.Core.Syntax;
 using Lumi.LLVM.Helpers;
