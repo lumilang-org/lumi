@@ -12,7 +12,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
     private readonly Dictionary<string, StructDeclarationNode> _structs = new();
     private int _loopDepth;
     public SemanticModel SemanticModel { get; } = new();
-    private FunctionRegistry Functions { get; } = new();
+    private FunctionRegistry Functions => SemanticModel.Functions;
 
     private void CheckFunction(FunctionDeclarationNode func)
     {
@@ -21,6 +21,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         foreach (var parameter in func.Parameters)
         {
             ValidateType(parameter.Type, parameter.Span);
+            SemanticModel.SetType(parameter, parameter.Type);
             if (!scope.TryDeclare(parameter.Name, parameter.Type))
             {
                 Report(
@@ -147,6 +148,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                             returnStatement.Span);
                     }
 
+                    SemanticModel.SetType(returnStatement, TypeConst.Void);
                     break;
                 }
 
@@ -157,6 +159,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                         returnStatement.Span);
 
                     CheckExpression(returnStatement.Expression, scope);
+                    SemanticModel.SetType(returnStatement, TypeConst.Void);
                     break;
                 }
 
@@ -166,6 +169,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                     expectedReturnType);
 
                 EnsureValueExpression(returnStatement.Expression, expressionType);
+                SemanticModel.SetType(returnStatement, expressionType);
 
                 if (expressionType != TypeConst.Error &&
                     !CanAssign(
@@ -606,6 +610,8 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                 argument,
                 scope,
                 expectedType);
+
+            SemanticModel.SetExpressionType(argument, actualType);
 
             if (!CanAssign(expectedType, actualType, argument))
             {

@@ -207,6 +207,16 @@ public sealed class Codegen
                 }
 
                 var returnValue = GenerateExpression(returnStatement.Expression);
+                var expectedTypeName = _semanticModel.GetType(returnStatement);
+                var expectedType = ResolveType(expectedTypeName);
+
+                returnValue = CastInitializer(
+                    returnValue,
+                    returnStatement.Expression,
+                    expectedType,
+                    expectedTypeName,
+                    "ret_cast");
+
                 _builder.BuildRet(returnValue);
                 break;
             }
@@ -719,9 +729,27 @@ public sealed class Codegen
                 $"Codegen Error: Function '{functionCall.Name}' was not declared.");
         }
 
-        var arguments = functionCall.Arguments
-            .Select(GenerateExpression)
-            .ToArray();
+        if (!_semanticModel.Functions.TryGet(functionCall.Name, out var signature))
+        {
+            throw new Exception(
+                $"Codegen Error: Function '{functionCall.Name}' was not found in SemanticModel.");
+        }
+
+        var arguments = new LLVMValueRef[functionCall.Arguments.Count];
+        for (int i = 0; i < functionCall.Arguments.Count; i++)
+        {
+            var argExpr = functionCall.Arguments[i];
+            var argValue = GenerateExpression(argExpr);
+            var targetTypeName = signature.ParameterTypes[i];
+            var targetType = ResolveType(targetTypeName);
+
+            arguments[i] = CastInitializer(
+                argValue,
+                argExpr,
+                targetType,
+                targetTypeName,
+                $"arg_{i}");
+        }
 
         var returnType = functionInfo.FunctionType.ReturnType;
 

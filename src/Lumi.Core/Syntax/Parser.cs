@@ -110,8 +110,12 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             throw new ParseException();
         }
 
-        var returnType = Current.Value;
-        Advance();
+        var returnType = Current.Type == TokenType.TypeVoid ? "void" : ParseTypeName();
+        if (returnType == TypeConst.Void)
+        {
+            Advance();
+        }
+
         Consume(TokenType.LBrace);
 
         var body = new List<StatementNode>();
@@ -339,12 +343,12 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
             parameters.Add(new FunctionParameterNode(type, name, span));
 
-            if (Current.Type != TokenType.Colon)
+            if (Current.Type != TokenType.Comma)
             {
                 break;
             }
 
-            Consume(TokenType.Colon);
+            Consume(TokenType.Comma);
         }
 
         return parameters;
@@ -890,12 +894,12 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             {
                 arguments.Add(ParseExpression());
 
-                if (Current.Type != TokenType.Colon)
+                if (Current.Type != TokenType.Comma)
                 {
                     break;
                 }
 
-                Consume(TokenType.Colon);
+                Consume(TokenType.Comma);
             }
         }
 

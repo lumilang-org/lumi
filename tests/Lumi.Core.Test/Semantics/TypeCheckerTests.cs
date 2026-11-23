@@ -77,4 +77,90 @@ public class TypeCheckerTests
 
         Assert.That(diagnostics.HasErrors, Is.True);
     }
+
+    [Test]
+    public void Check_FunctionCall_StructArgument_Valid()
+    {
+        var source = @"
+        struct Vec2 { i32 x i32 y }
+        func add(Vec2 v) -> i32 { return v.x + v.y }
+        func main() -> void {
+            Vec2 myVec = Vec2 { x: 10, y: 20 }
+            i32 result = add(myVec)
+        }";
+        var (_, _, diagnostics) = Check(source);
+        Assert.That(diagnostics.HasErrors, Is.False);
+    }
+
+    [Test]
+    public void Check_FunctionCall_ArrayArgument_Valid()
+    {
+        var source = @"
+        func sum(i32[2] arr) -> i32 { return arr[0] + arr[1] }
+        func main() -> void {
+            i32[2] myArr = [10, 20]
+            i32 result = sum(myArr)
+        }";
+        var (_, _, diagnostics) = Check(source);
+        Assert.That(diagnostics.HasErrors, Is.False);
+    }
+
+    [Test]
+    public void Check_ReturnStruct_Valid()
+    {
+        var source = @"
+        struct Vec2 { i32 x i32 y }
+        func createVec(i32 x, i32 y) -> Vec2 {
+            return Vec2 { x: x, y: y }
+        }
+        func main() -> void {
+            Vec2 v = createVec(1, 2)
+        }";
+        var (_, _, diagnostics) = Check(source);
+        if (diagnostics.HasErrors)
+        {
+            foreach (var d in diagnostics.Diagnostics)
+            {
+                throw new Exception($"[DEBUG_LOG] {d.Code}: {d.Message}");
+            }
+        }
+
+        Assert.That(diagnostics.HasErrors, Is.False);
+    }
+
+    [Test]
+    public void Check_ReturnArray_Valid()
+    {
+        var source = @"
+        func createArr() -> i32[2] {
+            return [1, 2]
+        }
+        func main() -> void {
+            i32[2] a = createArr()
+        }";
+        var (_, _, diagnostics) = Check(source);
+        if (diagnostics.HasErrors)
+        {
+            foreach (var d in diagnostics.Diagnostics)
+            {
+                Console.WriteLine($"[DEBUG_LOG] {d.Code}: {d.Message}");
+            }
+        }
+
+        Assert.That(diagnostics.HasErrors, Is.False);
+    }
+
+    [Test]
+    public void Check_FunctionCall_ArrayLengthMismatch()
+    {
+        var source = @"
+        func sum(i32[3] arr) -> i32 { return arr[0] + arr[1] }
+        func main() -> void {
+            i32[2] myArr = [10, 20]
+            i32 result = sum(myArr)
+        }";
+        var (_, _, diagnostics) = Check(source);
+        Assert.That(diagnostics.HasErrors, Is.True);
+        Assert.That(diagnostics.Diagnostics.Any(d => d.Code == DiagnosticCodes.TypeMismatch), Is.True);
+    }
 }
