@@ -281,4 +281,156 @@ func main() -> void {
         Assert.That(program.Functions[0].Body[1], Is.InstanceOf<IfStatementNode>());
         Assert.That(program.Functions[0].Body[2], Is.InstanceOf<WhileStatementNode>());
     }
+
+    [TestCase("*i32 p", "*i32")]
+    [TestCase("**i32 p", "**i32")]
+    [TestCase("*Vec p", "*Vec")]
+    [TestCase("*std::Vec p", "*std::Vec")]
+    [TestCase("*i32[3] p", "*i32[3]")]
+    [TestCase("*(i32[3]) p", "*(i32[3])")]
+    [TestCase("**(i32[3]) p", "**(i32[3])")]
+    [TestCase("*(i32) p", "*i32")]
+    public void Parse_PointerTypes_InVariableDeclarations(string declaration, string expectedType)
+    {
+        var program = Parse($"func main() -> void {{ {declaration} }}");
+
+        var decl = (VariableDeclarationNode)program.Functions[0].Body[0];
+        Assert.That(decl.Type, Is.EqualTo(expectedType));
+        Assert.That(decl.Name, Is.EqualTo("p"));
+    }
+
+    [Test]
+    public void Parse_PointerTypes_InParametersReturnsAndStructFields()
+    {
+        var program = Parse(@"
+struct Node { i32 value *Node next i32[2] pair **i32 deep }
+func first(*i32 a, **Node b) -> *i32 { return a }
+func main() -> void { }");
+
+        var fields = program.Structs[0].Fields;
+        Assert.That(fields.Select(f => f.Type), Is.EqualTo(new[] { "i32", "*Node", "i32[2]", "**i32" }));
+        Assert.That(program.Functions[0].Parameters.Select(p => p.Type), Is.EqualTo(new[] { "*i32", "**Node" }));
+        Assert.That(program.Functions[0].ReturnType, Is.EqualTo("*i32"));
+    }
+
+    [Test]
+    public void Parse_AddressOfAndDereference_ProduceNodesWithSpans()
+    {
+        var program = Parse("func main() -> void { i32 x = 1\n *i32 p = &x i32 y = *p }");
+        var body = program.Functions[0].Body;
+
+        var addressOf = (AddressOfExpressionNode)((VariableDeclarationNode)body[1]).Initializer!;
+        var dereference = (DereferenceExpressionNode)((VariableDeclarationNode)body[2]).Initializer!;
+        Assert.That(((IdentifierNode)addressOf.Operand).Name, Is.EqualTo("x"));
+        Assert.That(((IdentifierNode)dereference.Operand).Name, Is.EqualTo("p"));
+        Assert.That(addressOf.Span.End.Column - addressOf.Span.Start.Column, Is.EqualTo(2));
+        Assert.That(dereference.Span.End.Column - dereference.Span.Start.Column, Is.EqualTo(2));
+        Assert.That(addressOf.Span.Start.Column, Is.EqualTo(11));
+    }
+
+    [Test]
+    public void Parse_Dereference_AsAssignmentTarget()
+    {
+        var program = Parse("func main() -> void { i32 x = 1\n *i32 p = &x\n *p = 2\n **pp = 3\n (*p).y = 4 }");
+        var body = program.Functions[0].Body;
+
+        var simple = (TargetAssignmentStatementNode)body[2];
+        var chained = (TargetAssignmentStatementNode)body[3];
+        var member = (TargetAssignmentStatementNode)body[4];
+        Assert.That(simple.Target, Is.InstanceOf<DereferenceExpressionNode>());
+        Assert.That(((DereferenceExpressionNode)chained.Target).Operand, Is.InstanceOf<DereferenceExpressionNode>());
+        Assert.That(member.Target, Is.InstanceOf<MemberAccessNode>());
+        Assert.That(((MemberAccessNode)member.Target).Target, Is.InstanceOf<DereferenceExpressionNode>());
+    }
+
+    [Test]
+    public void Parse_StarAndAmpersand_KeepBinaryMeaning_AndBindTighterThanBinaryOperators()
+    {
+        var program = Parse(@"
+func main() -> void {
+    i32 a = *p * 2
+    i32 b = 2 * *p
+    i32 c = *p + 1
+    i32 d = a & b
+    i32 e = a & &b
+    i32 f = a * b
+}");
+        var body = program.Functions[0].Body;
+        ExpressionNode Init(int i) => ((VariableDeclarationNode)body[i]).Initializer!;
+
+        var a = (BinaryExpressionNode)Init(0);
+        Assert.That(a.Operator, Is.EqualTo("*"));
+        Assert.That(a.Left, Is.InstanceOf<DereferenceExpressionNode>());
+
+        var b = (BinaryExpressionNode)Init(1);
+        Assert.That(b.Right, Is.InstanceOf<DereferenceExpressionNode>());
+
+        var c = (BinaryExpressionNode)Init(2);
+        Assert.That(c.Operator, Is.EqualTo("+"));
+        Assert.That(c.Left, Is.InstanceOf<DereferenceExpressionNode>());
+
+        Assert.That(((BinaryExpressionNode)Init(3)).Operator, Is.EqualTo("&"));
+        Assert.That(((BinaryExpressionNode)Init(4)).Right, Is.InstanceOf<AddressOfExpressionNode>());
+        Assert.That(((BinaryExpressionNode)Init(5)).Operator, Is.EqualTo("*"));
+    }
+
+    [Test]
+    public void Parse_AddressOfAndDereference_WithPostfixChains()
+    {
+        var program = Parse(@"
+func main() -> void {
+    *i32 a = &p.x
+    *i32 b = &arr[0]
+    i32 c = (*p).x
+    i32 d = *p.next
+    *i32 e = &(*p).x
+}");
+        var body = program.Functions[0].Body;
+        ExpressionNode Init(int i) => ((VariableDeclarationNode)body[i]).Initializer!;
+
+        Assert.That(((AddressOfExpressionNode)Init(0)).Operand, Is.InstanceOf<MemberAccessNode>());
+        Assert.That(((AddressOfExpressionNode)Init(1)).Operand, Is.InstanceOf<IndexExpressionNode>());
+        Assert.That(Init(2), Is.InstanceOf<MemberAccessNode>());
+        // *p.next is *(p.next)
+        Assert.That(((DereferenceExpressionNode)Init(3)).Operand, Is.InstanceOf<MemberAccessNode>());
+        Assert.That(((MemberAccessNode)((AddressOfExpressionNode)Init(4)).Operand).Target,
+            Is.InstanceOf<DereferenceExpressionNode>());
+    }
+
+    [Test]
+    public void Parse_StatementBoundaries_AroundDereference()
+    {
+        var program = Parse(@"
+func f(i32 x) -> void {
+    i32 y = x
+    *p = 1
+    f(y)
+    (*p).x = 2
+    i32 z = y
+        * 3
+}");
+        var body = program.Functions[0].Body;
+
+        Assert.That(body, Has.Count.EqualTo(5));
+        Assert.That(body[1], Is.InstanceOf<TargetAssignmentStatementNode>());
+        Assert.That(body[2], Is.InstanceOf<ExpressionStatementNode>());
+        Assert.That(body[3], Is.InstanceOf<TargetAssignmentStatementNode>());
+        // A leading `*` without an assignment on its line still continues the expression.
+        Assert.That(((VariableDeclarationNode)body[4]).Initializer, Is.InstanceOf<BinaryExpressionNode>());
+    }
+
+    [Test]
+    public void Parse_PointerDeclarations_DoNotCaptureDereferenceStatements()
+    {
+        var program = Parse("func main() -> void { *i32 p = &x\n *p = 1 }");
+
+        Assert.That(program.Functions[0].Body[0], Is.InstanceOf<VariableDeclarationNode>());
+        Assert.That(program.Functions[0].Body[1], Is.InstanceOf<TargetAssignmentStatementNode>());
+    }
+
+    [Test]
+    public void Parse_PointerToVoid_IsASyntaxError()
+    {
+        Assert.Throws<Exception>(() => Parse("func f(*void p) -> void { }"));
+    }
 }

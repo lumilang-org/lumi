@@ -2,6 +2,7 @@ using LLVMSharp.Interop;
 using Lumi.Core.Ast;
 using Lumi.Core.Ast.Declarations;
 using Lumi.Core.Ast.Expressions;
+using Lumi.Core.Semantics;
 using Lumi.Core.Syntax;
 using Lumi.LLVM.Structs;
 
@@ -19,6 +20,13 @@ public sealed partial class Codegen
             var length = uint.Parse(lengthStr);
             var elementType = ResolveType(elementTypeName);
             return LLVMTypeRef.CreateArray(elementType, length);
+        }
+
+        // Pointers are opaque; the pointee is tracked through Lumi type names. Not resolving
+        // the pointee here also keeps self-referential structs (*Node inside Node) valid.
+        if (PointerTypes.IsPointer(typeName))
+        {
+            return LLVMTypeRef.CreatePointer(_context.Int8Type, 0);
         }
 
         if (_structLayouts.TryGetValue(typeName, out var structLayout))

@@ -65,6 +65,27 @@ struct Vec {
 }
 ```
 
+### 2.4 Pointers
+
+`*T` is a pointer to a value of type `T`; pointers nest (`**i32`) and can point to any type, including structs, arrays, strings and other pointers. They are allowed everywhere a type is: variables, parameters, return types (`-> *i32`) and struct fields (a struct may hold a pointer to itself).
+
+```text
+i32 x = 1
+*i32 p = &x        // address-of
+*p = 2             // write through the pointer
+i32 y = *p + 1     // read through the pointer
+
+struct Node { i32 value *Node next }
+func bump(*i32 n) -> void { *n = *n + 1 }
+```
+
+* **`&expr`** yields `*T` for an `expr` of type `T`. `expr` must be a variable, parameter, struct field, array element or dereference (`&x`, `&p.x`, `&arr[1]`, `&*p`). Literals, call results and arithmetic (`&5`, `&f()`, `&(x + 1)`) are rejected. `&s[i]` on a string gives a `*char` into the string's read-only bytes: read it, never write through it.
+* **`*expr`** requires a pointer `*T` and yields `T`. It is also an assignment target (`*p = v`, `**pp = v`) and works with `++`/`--` (`(*p)++`).
+* **Structs and arrays:** there is no automatic dereference. Use `(*p).x` and `(*a)[i]`. A pointer to an array is written `*(i32[3])` (this is also the type of `&arr`); `*i32[3]` means an array of three `*i32`.
+* **Comparison:** pointers of the same type can be compared with `==` and `!=` (address equality). There is no pointer arithmetic or ordering. `print`/`println` on a pointer print its address, not the pointee.
+* **Limits:** there is no `null` and no pointer to `void`; a pointer is not tracked after creation, so keeping one past the lifetime of the variable it points to (for example returning `&local`) is undefined behavior. Pointers cannot be converted between types.
+* **Parsing note:** statements have no terminator, so a `*` that starts a new line **and** whose line contains an `=` begins a new statement (`*p = 1`) instead of continuing the previous line as a multiplication. A `(` on a new line is never a call.
+
 ---
 
 ## 3. Variables & Scope
@@ -235,7 +256,7 @@ Lumi includes built-in output functions for development:
 * `print(expr)`: Prints the value of `expr` without a trailing newline.
 * `println(expr)`: Prints the value of `expr` followed by a system newline.
 
-`expr` may be an integer, float, `bool`, `char` or `string`.
+`expr` may be an integer, float, `bool`, `char` or `string`. A pointer (`*T`, any pointee) prints its address as `0x` followed by lowercase hex digits (for example `0x16fdff2ac`); the pointee is not read. The value differs from run to run.
 
 ---
 

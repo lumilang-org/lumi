@@ -25,6 +25,8 @@ public sealed partial class Codegen
             BinaryExpressionNode binary => GenerateBinary(binary),
             UnaryExpressionNode unary => GenerateUnary(unary),
             UpdateExpressionNode update => GenerateUpdate(update),
+            AddressOfExpressionNode addressOf => ResolveTargetAddress(addressOf.Operand).Pointer,
+            DereferenceExpressionNode dereference => GenerateDereference(dereference),
             LiteralNode<char> character => LLVMValueRef.CreateConstInt(_context.Int8Type, character.Value),
             StringLiteralNode str => GenerateStringLiteral(str),
             LiteralNode<bool> boolean => LLVMValueRef.CreateConstInt(_context.Int1Type, (ulong)(boolean.Value ? 1 : 0)),
@@ -122,6 +124,12 @@ public sealed partial class Codegen
 
             _builder.BuildStore(elementValue, elementPtr);
         }
+    }
+
+    private LLVMValueRef GenerateDereference(DereferenceExpressionNode dereference)
+    {
+        var (pointer, _, pointeeType) = ResolveTargetAddress(dereference);
+        return _builder.BuildLoad2(pointeeType, pointer, "deref");
     }
 
     private LLVMValueRef GenerateIndexExpression(IndexExpressionNode indexExpr)
@@ -270,6 +278,15 @@ public sealed partial class Codegen
                     $"{baseLumiType}.{field.Name}.ptr");
 
                 return (fieldPtr, field.LumiType, field.LlvmType);
+            }
+
+            case DereferenceExpressionNode dereference:
+            {
+                // The operand is a pointer value; it is the address of the pointee.
+                var pointer = GenerateExpression(dereference.Operand);
+                var pointeeTypeName = _semanticModel.GetExpressionType(dereference);
+
+                return (pointer, pointeeTypeName, ResolveType(pointeeTypeName));
             }
 
             case IndexExpressionNode indexExpr

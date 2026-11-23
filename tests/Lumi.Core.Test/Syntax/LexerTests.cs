@@ -288,4 +288,27 @@ public class LexerTests
         Assert.That(lexer.NextToken().Value, Is.EqualTo("++"));
         Assert.That(lexer.NextToken().Value, Is.EqualTo("--"));
     }
+
+    [Test]
+    public void NextToken_StarAndAmpersand_KeepTheirExistingMeanings()
+    {
+        var lexer = new Lexer("*p ** &q & r && s a*b", new DiagnosticBag(), "test.lumi");
+
+        var types = new List<TokenType>();
+        Token token;
+        while ((token = lexer.NextToken()).Type != TokenType.EndOfFile)
+        {
+            types.Add(token.Type);
+        }
+
+        Assert.That(types, Is.EqualTo(new[]
+        {
+            TokenType.Star, TokenType.Identifier,
+            TokenType.Star, TokenType.Star,
+            TokenType.BitwiseAnd, TokenType.Identifier,
+            TokenType.BitwiseAnd, TokenType.Identifier,
+            TokenType.LogicalAnd, TokenType.Identifier,
+            TokenType.Identifier, TokenType.Star, TokenType.Identifier
+        }));
+    }
 }

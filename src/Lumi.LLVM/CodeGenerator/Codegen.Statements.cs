@@ -2,6 +2,7 @@ using LLVMSharp.Interop;
 using Lumi.Core.Ast;
 using Lumi.Core.Ast.Statements;
 using Lumi.Core.Ast.Expressions;
+using Lumi.Core.Semantics;
 using Lumi.Core.Syntax;
 using Lumi.LLVM.Utils;
 
@@ -128,6 +129,10 @@ public sealed partial class Codegen
                         break;
                     case TypeConst.F16 or TypeConst.F32 or TypeConst.F64:
                         WriterUtils.EmitPrintFloat(printValue, _module, _context, _builder);
+                        break;
+                    case var pointerType when PointerTypes.IsPointer(pointerType):
+                        // Prints the address held by the pointer, not the pointee.
+                        WriterUtils.EmitPrintPointer(printValue, _module, _context, _builder);
                         break;
                     default:
                         throw new NotSupportedException(

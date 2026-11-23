@@ -4,6 +4,7 @@ using Lumi.Core.Ast.Statements;
 using Lumi.Core.Ast.Declarations;
 using Lumi.Core.Ast.Expressions;
 using Lumi.Core.Diagnostics;
+using Lumi.Core.Semantics;
 
 namespace Lumi.Core.Syntax;
 
@@ -104,7 +105,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
         if (Current.Type != TokenType.TypeVoid &&
             !IsTypeToken(Current.Type) &&
-            Current.Type != TokenType.Identifier)
+            Current.Type != TokenType.Identifier &&
+            Current.Type != TokenType.Star)
         {
             Report(
                 DiagnosticCodes.ExpectedToken,
@@ -260,7 +262,9 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         while (Current.Type != TokenType.RBrace &&
                Current.Type != TokenType.EndOfFile)
         {
-            if (!IsTypeToken(Current.Type) && Current.Type != TokenType.Identifier)
+            if (!IsTypeToken(Current.Type) &&
+                Current.Type != TokenType.Identifier &&
+                Current.Type != TokenType.Star)
             {
                 Report(
                     DiagnosticCodes.ExpectedToken,
@@ -270,8 +274,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             }
 
             var fieldTypeToken = Current;
-            var fieldType = fieldTypeToken.Value;
-            Advance();
+            var fieldType = ParseTypeName();
 
             var fieldNameToken = Current;
             var fieldName = fieldNameToken.Value;
@@ -347,22 +350,46 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
     private string ParseTypeName()
     {
-        if (!IsTypeToken(Current.Type) && Current.Type != TokenType.Identifier)
+        var pointerDepth = 0;
+        while (Current.Type == TokenType.Star)
         {
-            Report(
-                DiagnosticCodes.ExpectedToken,
-                $"Syntax Error: Expected type name, got {Current.Type} ('{Current.Value}') at position {_position}",
-                Current.Span);
-            throw new ParseException();
+            Advance();
+            pointerDepth++;
         }
 
-        var typeName = Current.Value;
-        Advance();
+        string typeName;
 
-        while (Current.Type == TokenType.DoubleColon)
+        if (pointerDepth > 0 && Current.Type == TokenType.LParen)
         {
-            Consume(TokenType.DoubleColon);
-            typeName += "::" + Consume(TokenType.Identifier).Value;
+            // *(i32[3]): a pointer to an array type.
+            Consume(TokenType.LParen);
+            typeName = ParseTypeName();
+            Consume(TokenType.RParen);
+        }
+        else
+        {
+            if (!IsTypeToken(Current.Type) && Current.Type != TokenType.Identifier)
+            {
+                Report(
+                    DiagnosticCodes.ExpectedToken,
+                    $"Syntax Error: Expected type name, got {Current.Type} ('{Current.Value}') at position {_position}",
+                    Current.Span);
+                throw new ParseException();
+            }
+
+            typeName = Current.Value;
+            Advance();
+
+            while (Current.Type == TokenType.DoubleColon)
+            {
+                Consume(TokenType.DoubleColon);
+                typeName += "::" + Consume(TokenType.Identifier).Value;
+            }
+        }
+
+        for (var i = 0; i < pointerDepth; i++)
+        {
+            typeName = PointerTypes.To(typeName);
         }
 
         while (Current.Type == TokenType.LBracket)
@@ -414,19 +441,50 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
     private bool IsVariableDeclaration()
     {
-        if (IsTypeToken(Current.Type))
+        var offset = 0;
+        while (Peek(offset).Type == TokenType.Star)
+        {
+            offset++;
+        }
+
+        if (offset == 0 && IsTypeToken(Current.Type))
         {
             return true;
         }
 
-        if (Current.Type != TokenType.Identifier)
+        // `*(T) name`: skip the parenthesised pointee type.
+        if (offset > 0 && Peek(offset).Type == TokenType.LParen)
+        {
+            var depth = 0;
+            do
+            {
+                switch (Peek(offset).Type)
+                {
+                    case TokenType.LParen:
+                        depth++;
+                        break;
+                    case TokenType.RParen:
+                        depth--;
+                        break;
+                    case TokenType.EndOfFile:
+                        return false;
+                }
+
+                offset++;
+            } while (depth > 0);
+
+            return IsTypeSuffixThenName(offset);
+        }
+
+        var first = Peek(offset).Type;
+        if (first != TokenType.Identifier && !(offset > 0 && IsTypeToken(first)))
         {
             return false;
         }
 
-        // It's an identifier. Check if it's followed by another identifier (e.g., Vec p)
-        // or a bracket (e.g., Vec[2] p) or double colon (e.g., std::Vec p)
-        var offset = 1;
+        offset++;
+
+        // A type name, possibly module-qualified (std::Vec), followed by a variable name.
         while (Peek(offset).Type == TokenType.DoubleColon)
         {
             offset++; // Consume '::'
@@ -438,6 +496,12 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             offset++; // Consume identifier
         }
 
+        return IsTypeSuffixThenName(offset);
+    }
+
+    // Optional array suffixes ([N]...) followed by the declared variable's name.
+    private bool IsTypeSuffixThenName(int offset)
+    {
         while (Peek(offset).Type == TokenType.LBracket)
         {
             offset++; // Consume '['
@@ -456,6 +520,32 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         }
 
         return Peek(offset).Type == TokenType.Identifier;
+    }
+
+    // A `*` that starts a new line and whose line assigns (`*p = 1`) begins a statement
+    // instead of continuing the previous expression as a multiplication.
+    private bool StartsDereferenceAssignment()
+    {
+        var line = Current.Span.Start.Line;
+        if (line <= Peek(-1).Span.End.Line)
+        {
+            return false;
+        }
+
+        for (var offset = 0; Peek(offset).Span.Start.Line == line; offset++)
+        {
+            if (Peek(offset).Type == TokenType.Assign)
+            {
+                return true;
+            }
+
+            if (Peek(offset).Type == TokenType.EndOfFile)
+            {
+                break;
+            }
+        }
+
+        return false;
     }
 
     private StatementNode ParseStatement()
@@ -552,7 +642,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
                 if (Current.Type == TokenType.Assign)
                 {
-                    if (expr is not IdentifierNode and not MemberAccessNode)
+                    if (expr is not IdentifierNode and not MemberAccessNode
+                        and not IndexExpressionNode and not DereferenceExpressionNode)
                     {
                         Report(
                             DiagnosticCodes.UnexpectedToken,
@@ -747,6 +838,11 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
                 continue;
             }
 
+            if (Current.Type == TokenType.Star && StartsDereferenceAssignment())
+            {
+                break;
+            }
+
             if (Current.Type == TokenType.RParen ||
                 Current.Type == TokenType.RBracket ||
                 precedence >= GetPrecedence(Current.Type))
@@ -814,6 +910,10 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             case TokenType.PlusPlus:
             case TokenType.MinusMinus:
                 return ParsePrefixUpdate();
+            case TokenType.Star:
+                return ParseDereference();
+            case TokenType.BitwiseAnd:
+                return ParseAddressOf();
             case TokenType.LogicalNot:
             case TokenType.BitwiseNot:
             case TokenType.LeftShift:
@@ -882,6 +982,26 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         Advance();
 
         return new StringLiteralNode(token.Value, token.Span);
+    }
+
+    private ExpressionNode ParseDereference()
+    {
+        var operatorToken = Consume(TokenType.Star);
+        var operand = ParseExpression(Precedence.Prefix);
+
+        return new DereferenceExpressionNode(
+            operand,
+            CreateSpan(operatorToken.Span.Start, operand.Span.End));
+    }
+
+    private ExpressionNode ParseAddressOf()
+    {
+        var operatorToken = Consume(TokenType.BitwiseAnd);
+        var operand = ParseExpression(Precedence.Prefix);
+
+        return new AddressOfExpressionNode(
+            operand,
+            CreateSpan(operatorToken.Span.Start, operand.Span.End));
     }
 
     private ExpressionNode ParsePrefixUpdate()
@@ -1004,7 +1124,9 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             return ParseStructLiteral(startToken with { Value = name });
         }
 
-        if (Current.Type != TokenType.LParen)
+        // A `(` on the next line starts a new statement, e.g. `(*p).x = 1`, not a call.
+        if (Current.Type != TokenType.LParen ||
+            Current.Span.Start.Line != Peek(-1).Span.End.Line)
         {
             return new IdentifierNode(name, CreateSpan(startToken.Span.Start, Peek(-1).Span.End));
         }

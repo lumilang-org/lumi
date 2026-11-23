@@ -293,6 +293,8 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             }
 
             case PrintStatementNode printStmt:
+                // Pointers print their address; the expression type recorded here is what
+                // lets codegen tell that apart from printing the pointee.
                 CheckExpression(printStmt.Expression, scope);
                 break;
 
@@ -427,6 +429,11 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                         SemanticModel.SetExpressionType(member, targetType);
                         break;
 
+                    case DereferenceExpressionNode dereference:
+                        targetType = CheckDereference(dereference, scope);
+                        SemanticModel.SetExpressionType(dereference, targetType);
+                        break;
+
                     case IndexExpressionNode indexExpr:
                         targetType = CheckIndexExpression(indexExpr, scope);
                         SemanticModel.SetExpressionType(indexExpr, targetType);
@@ -554,6 +561,12 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
             UpdateExpressionNode update =>
                 CheckUpdateExpression(update, scope),
+
+            AddressOfExpressionNode addressOf =>
+                CheckAddressOf(addressOf, scope),
+
+            DereferenceExpressionNode dereference =>
+                CheckDereference(dereference, scope),
 
             LiteralNode<char> _ => TypeConst.Char,
             StringLiteralNode _ => TypeConst.String,
@@ -850,7 +863,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
     {
         var targetType = CheckExpression(update.Target, scope);
 
-        if (!IsUpdateTarget(update.Target))
+        if (!IsAddressable(update.Target))
         {
             Report(DiagnosticCodes.InvalidUpdateTarget,
                 $"The operand of '{update.Operator}' must be a variable, struct field or array element.",
@@ -883,15 +896,58 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         return targetType;
     }
 
-    private static bool IsUpdateTarget(ExpressionNode expression)
+    // Expressions that denote storage: variables, fields and elements of such storage, and
+    // anything reached through a pointer.
+    private static bool IsAddressable(ExpressionNode expression)
     {
         return expression switch
         {
             IdentifierNode => true,
-            MemberAccessNode member => IsUpdateTarget(member.Target),
-            IndexExpressionNode index => IsUpdateTarget(index.Target),
+            MemberAccessNode member => IsAddressable(member.Target),
+            IndexExpressionNode index => IsAddressable(index.Target),
+            DereferenceExpressionNode => true,
             _ => false
         };
+    }
+
+    // &x -> *T for an addressable operand of type T. The pointer is not tracked beyond its
+    // type, so it can outlive the variable it points to.
+    private string CheckAddressOf(AddressOfExpressionNode addressOf, SymbolTable scope)
+    {
+        var operandType = CheckExpression(addressOf.Operand, scope);
+
+        if (!IsAddressable(addressOf.Operand))
+        {
+            Report(DiagnosticCodes.InvalidAddressOperand,
+                "Cannot take the address of a value; '&' needs a variable, struct field, array element or dereference.",
+                addressOf.Operand.Span);
+            return TypeConst.Error;
+        }
+
+        return operandType == TypeConst.Error
+            ? TypeConst.Error
+            : PointerTypes.To(operandType);
+    }
+
+    // *p -> T for a pointer p of type *T. Also usable as an assignment target.
+    private string CheckDereference(DereferenceExpressionNode dereference, SymbolTable scope)
+    {
+        var operandType = CheckExpression(dereference.Operand, scope);
+
+        if (operandType == TypeConst.Error)
+        {
+            return TypeConst.Error;
+        }
+
+        if (!PointerTypes.IsPointer(operandType))
+        {
+            Report(DiagnosticCodes.InvalidDereference,
+                $"Cannot dereference a value of type '{operandType}'; '*' needs a pointer.",
+                dereference.Operand.Span);
+            return TypeConst.Error;
+        }
+
+        return PointerTypes.Pointee(operandType);
     }
 
     private string ReportErrorAndReturn(string code, string message, SourceSpan? span)
@@ -1206,6 +1262,11 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             return TypeConst.Bool;
         }
 
+        if (PointerTypes.IsPointer(leftType) && isEquality)
+        {
+            return TypeConst.Bool;
+        }
+
         if (leftType == TypeConst.Char || leftType == TypeConst.Bool)
         {
             Report(DiagnosticCodes.TypeMismatch,
@@ -1384,6 +1445,12 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             return;
         }
 
+        if (PointerTypes.IsPointer(type))
+        {
+            ValidateType(PointerTypes.Pointee(type), span);
+            return;
+        }
+
         if (TypePromoter.IsIntegerType(type) ||
             IsFloatingPointType(type) ||
             type == TypeConst.Bool ||
@@ -1409,6 +1476,11 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         {
             ParseArrayType(type, out var elementType, out var length);
             return $"{ResolveType(elementType)}[{length}]";
+        }
+
+        if (PointerTypes.IsPointer(type))
+        {
+            return PointerTypes.To(ResolveType(PointerTypes.Pointee(type)));
         }
 
         if (TypePromoter.IsIntegerType(type) ||

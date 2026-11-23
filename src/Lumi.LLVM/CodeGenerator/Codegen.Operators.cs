@@ -86,6 +86,18 @@ public sealed partial class Codegen
                 "str.cmptmp");
         }
 
+        if (PointerTypes.IsPointer(_semanticModel.GetExpressionType(binary.Left))
+            && binary.Operator is TypeConst.EqualsEquals or TypeConst.BangEquals)
+        {
+            return _builder.BuildICmp(
+                binary.Operator == TypeConst.EqualsEquals
+                    ? LLVMIntPredicate.LLVMIntEQ
+                    : LLVMIntPredicate.LLVMIntNE,
+                left,
+                right,
+                "ptr.cmptmp");
+        }
+
         if (left.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind
             || right.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
         {

@@ -1,6 +1,6 @@
 # Lumi
 
-A statically typed systems programming language and native compiler built in C# and .NET on top of **LLVM** (`LLVMSharp.Interop`), focused on explicit types, stack-based values, and a clean, readable compiler pipeline.
+A statically typed systems programming language and native compiler built in C# and .NET on top of **LLVM** (`LLVMSharp.Interop`), focused on explicit types and a clean, readable compiler pipeline.
 
 ## v0.1 Features
 
@@ -37,12 +37,6 @@ func main() -> void {
 2. **Parser** (`Lumi.Core.Syntax`) — Builds the AST (`ProgramNode`, `StructDeclarationNode`, `FunctionDeclarationNode`, statements, and expressions) with top-level error recovery.
 3. **Semantic Analysis** (`Lumi.Core.Semantics`) — Registers functions and structs, manages lexical scopes (`SymbolTable`), checks types and literal bounds (`TypeChecker`), and populates `SemanticModel`.
 4. **LLVM Codegen** (`Lumi.LLVM.CodeGenerator`) — Lowers AST nodes and `SemanticModel` types into LLVM IR via `LLVMSharp.Interop` and verifies the module.
-
-## Status & Roadmap (`v0.1` -> `v0.2`)
-
-- **v0.1 (Current):** Core primitives, control flow, functions, structs, semantic type checking, and LLVM IR codegen.
-- **Next up:** Struct function parameters/returns, nested structs, fixed-size arrays, a test suite (`Lumi.Tests`), and sample programs under `examples/`.
-- **Later:** Generics, modules/imports, and richer optimization/tooling support.
 
 ## License
 

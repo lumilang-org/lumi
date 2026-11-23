@@ -182,6 +182,13 @@ public static class WriterUtils
             "write_call");
     }
 
+    internal static void EmitPrintPointer(LLVMValueRef pointer, LLVMModuleRef module, LLVMContextRef context,
+        LLVMBuilderRef builder)
+    {
+        new PointerPrintEmitter(module, context, builder)
+            .Emit(pointer);
+    }
+
     internal static void EmitPrintBool(LLVMValueRef printValue, LLVMModuleRef module, LLVMContextRef context,
         LLVMBuilderRef builder)
     {

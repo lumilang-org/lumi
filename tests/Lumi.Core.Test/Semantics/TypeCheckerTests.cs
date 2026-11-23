@@ -497,4 +497,220 @@ func main() -> void {
         Assert.That(CountCode(widening, DiagnosticCodes.TypeMismatch), Is.EqualTo(1));
         Assert.That(ok.HasErrors, Is.False);
     }
+
+    [Test]
+    public void Check_Pointers_AddressOfAndDereferenceTypes()
+    {
+        var (program, model, diagnostics) = Check(@"
+struct P { i32 x }
+func main() -> void {
+    i32 x = 1
+    P pt = P { x: 1 }
+    i32[3] arr = [1, 2, 3]
+    string s = ""abc""
+    *i32 a = &x
+    **i32 b = &a
+    i32 c = **b
+    *i32 d = &pt.x
+    *i32 e = &arr[1]
+    *(i32[3]) f = &arr
+    *P g = &pt
+    i32 h = (*g).x
+    *char i = &s[0]
+    *i32[2] j = [&x, &x]
+}");
+
+        Assert.That(diagnostics.Diagnostics.Select(DiagnosticFormatter.Format), Is.Empty);
+        var body = program.Functions[0].Body;
+        string TypeOf(int i) => model.GetExpressionType(((VariableDeclarationNode)body[i]).Initializer!);
+        Assert.That(TypeOf(4), Is.EqualTo("*i32"));
+        Assert.That(TypeOf(5), Is.EqualTo("**i32"));
+        Assert.That(TypeOf(6), Is.EqualTo("i32"));
+        Assert.That(TypeOf(9), Is.EqualTo("*(i32[3])"));
+        Assert.That(TypeOf(10), Is.EqualTo("*P"));
+        Assert.That(TypeOf(11), Is.EqualTo("i32"));
+        Assert.That(TypeOf(12), Is.EqualTo("*char"));
+    }
+
+    [Test]
+    public void Check_Pointers_AssignmentThroughDereference()
+    {
+        var (_, _, valid) = Check(@"
+func main() -> void {
+    i32 x = 1
+    *i32 p = &x
+    **i32 pp = &p
+    *p = 2
+    **pp = 3
+    *pp = &x
+    (*p)++
+    *p = *p + 1
+}");
+        var (_, _, mismatch) = Check("func main() -> void { i32 x = 1\n *i32 p = &x\n *p = true }");
+        var (_, _, notPointer) = Check("func main() -> void { i32 x = 1\n *x = 2 }");
+
+        Assert.That(valid.HasErrors, Is.False);
+        Assert.That(CountCode(mismatch, DiagnosticCodes.TypeMismatch), Is.EqualTo(1));
+        Assert.That(CountCode(notPointer, DiagnosticCodes.InvalidDereference), Is.EqualTo(1));
+    }
+
+    [Test]
+    public void Check_AddressOf_RejectsNonLvalues_WithFileAwareDiagnostic()
+    {
+        var sources = new[]
+        {
+            "func main() -> void { *i32 p = &5 }",
+            "func f() -> i32 { return 1 }\nfunc main() -> void { *i32 p = &f() }",
+            "func main() -> void { i32 x = 1\n *i32 p = &(x + 1) }",
+            "func main() -> void { i32 x = 1\n *i32 p = &x++ }",
+            "func main() -> void { *char p = &'a' }",
+            "func main() -> void { *string p = &\"a\" }"
+        };
+
+        foreach (var source in sources)
+        {
+            var (_, _, diagnostics) = Check(source);
+
+            Assert.That(CountCode(diagnostics, DiagnosticCodes.InvalidAddressOperand), Is.EqualTo(1), source);
+            var diagnostic = diagnostics.Diagnostics.First(d => d.Code == DiagnosticCodes.InvalidAddressOperand);
+            Assert.That(diagnostic.FileName, Is.EqualTo("test.lumi"));
+            Assert.That(diagnostic.Span, Is.Not.Null);
+        }
+    }
+
+    [Test]
+    public void Check_Dereference_RejectsNonPointers()
+    {
+        var sources = new[]
+        {
+            "func main() -> void { i32 x = 1 i32 y = *x }",
+            "func main() -> void { i32 y = *5 }",
+            "func main() -> void { string s = \"a\" char c = *s }",
+            "func main() -> void { *i32[2] a = [&b, &b] i32 y = *a }",
+            "func main() -> void { i32 x = 1\n *i32 p = &x i32 y = **p }"
+        };
+
+        foreach (var source in sources)
+        {
+            var (_, _, diagnostics) = Check(source);
+
+            Assert.That(CountCode(diagnostics, DiagnosticCodes.InvalidDereference), Is.EqualTo(1), source);
+            Assert.That(diagnostics.Diagnostics.First(d => d.Code == DiagnosticCodes.InvalidDereference).FileName,
+                Is.EqualTo("test.lumi"));
+        }
+    }
+
+    [Test]
+    public void Check_Pointers_TypeCompatibilityIsByPointee()
+    {
+        var (_, _, ok) = Check("func main() -> void { i32 x = 1\n *i32 p = &x\n *i32 q = p }");
+        var (_, _, wrongPointee) = Check("func main() -> void { i32 x = 1\n *i64 p = &x }");
+        var (_, _, depth) = Check("func main() -> void { i32 x = 1\n *i32 p = &x\n **i32 q = p }");
+        var (_, _, fromInt) = Check("func main() -> void { *i32 p = 5 }");
+        var (_, _, toInt) = Check("func main() -> void { i32 x = 1 i32 n = &x }");
+        var (_, _, args) = Check(@"
+func take(*i32 p) -> void { }
+func main() -> void { i64 x = 1 take(&x) }");
+        var (_, _, ret) = Check("func f(i64 x) -> *i32 { return &x }");
+
+        Assert.That(ok.HasErrors, Is.False);
+        foreach (var diagnostics in new[] { wrongPointee, depth, fromInt, toInt, args, ret })
+        {
+            Assert.That(CountCode(diagnostics, DiagnosticCodes.TypeMismatch), Is.EqualTo(1));
+        }
+    }
+
+    [Test]
+    public void Check_Pointers_UnknownPointeeAndMemberAccessWithoutDereference()
+    {
+        var (_, _, unknown) = Check("func main() -> void { *Missing p }");
+        var (_, _, member) = Check(@"
+struct P { i32 x }
+func main() -> void { P pt = P { x: 1 } *P p = &pt i32 y = p.x }");
+
+        Assert.That(CountCode(unknown, DiagnosticCodes.TypeMismatch), Is.GreaterThan(0));
+        Assert.That(CountCode(member, DiagnosticCodes.TypeMismatch), Is.GreaterThan(0));
+    }
+
+    [Test]
+    public void Check_Pointers_OperatorRules()
+    {
+        var (_, _, equality) = Check(@"
+func main() -> void {
+    i32 a = 1
+    *i32 p = &a
+    *i32 q = &a
+    bool x = p == q
+    bool y = p != &a
+}");
+        var (_, _, arithmetic) = Check("func main() -> void { i32 a = 1\n *i32 p = &a\n *i32 q = p + 1 }");
+        var (_, _, ordering) = Check("func main() -> void { i32 a = 1\n *i32 p = &a bool b = p < p }");
+        var (_, _, mixed) = Check("func main() -> void { i32 a = 1\n *i32 p = &a bool b = p == a }");
+
+        Assert.That(equality.HasErrors, Is.False);
+        Assert.That(arithmetic.HasErrors, Is.True);
+        Assert.That(ordering.HasErrors, Is.True);
+        Assert.That(CountCode(mixed, DiagnosticCodes.TypeMismatch), Is.EqualTo(1));
+    }
+
+    [Test]
+    public void Check_Pointers_InStructFieldsIncludingSelfReference()
+    {
+        var (_, _, valid) = Check(@"
+struct Node { i32 value *Node next }
+func main() -> void {
+    Node a = Node { value: 1, next: &b }
+}");
+        var (_, _, ok) = Check(@"
+struct Node { i32 value *Node next }
+func main() -> void {
+    Node a
+    Node b
+    a.next = &b
+    i32 v = (*a.next).value
+}");
+
+        Assert.That(valid.Diagnostics.Select(d => d.Code), Does.Contain(DiagnosticCodes.UndefinedVariable));
+        Assert.That(ok.HasErrors, Is.False);
+    }
+
+    [Test]
+    public void Check_Print_AcceptsPointersOfAnyPointeeType()
+    {
+        var (program, model, diagnostics) = Check(@"
+struct P { i32 x }
+func main() -> void {
+    u8 b = 1
+    i32 n = 2
+    P pt = P { x: 3 }
+    *u8 pb = &b
+    *i32 pn = &n
+    *P pp = &pt
+    **i32 ppn = &pn
+    print(pb)
+    println(pn)
+    print(pp)
+    println(ppn)
+    println(&n)
+    print(&pt.x)
+    println(*pn)
+}");
+
+        Assert.That(diagnostics.Diagnostics.Select(DiagnosticFormatter.Format), Is.Empty);
+
+        // The recorded expression type is what lets codegen print the address, not the pointee.
+        var printed = program.Functions[0].Body.OfType<PrintStatementNode>().ToList();
+        Assert.That(printed.Select(p => model.GetExpressionType(p.Expression)),
+            Is.EqualTo(new[] { "*u8", "*i32", "*P", "**i32", "*i32", "*i32", "i32" }));
+    }
+
+    [Test]
+    public void Check_Print_StillReportsErrorsInsidePointerExpressions()
+    {
+        var (_, _, nonPointer) = Check("func main() -> void { i32 x = 1\n println(*x) }");
+        var (_, _, nonLvalue) = Check("func main() -> void { println(&5) }");
+
+        Assert.That(CountCode(nonPointer, DiagnosticCodes.InvalidDereference), Is.EqualTo(1));
+        Assert.That(CountCode(nonLvalue, DiagnosticCodes.InvalidAddressOperand), Is.EqualTo(1));
+    }
 }
