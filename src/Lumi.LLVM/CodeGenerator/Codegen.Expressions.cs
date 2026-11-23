@@ -2,6 +2,7 @@ using System.Text;
 using LLVMSharp.Interop;
 using Lumi.Core.Ast;
 using Lumi.Core.Ast.Expressions;
+using Lumi.Core.Semantics;
 using Lumi.Core.Syntax;
 using Lumi.LLVM.Structs;
 using Lumi.LLVM.Utils;
@@ -28,6 +29,8 @@ public sealed partial class Codegen
             DereferenceExpressionNode dereference => GenerateDereference(dereference),
             LiteralNode<char> character => LLVMValueRef.CreateConstInt(_context.Int8Type, character.Value),
             StringLiteralNode str => GenerateStringLiteral(str),
+            // Pointers are opaque, so one null constant serves every pointer type.
+            NilLiteralNode => LLVMValueRef.CreateConstPointerNull(ResolveType(PointerTypes.To(TypeConst.U8))),
             LiteralNode<bool> boolean => LLVMValueRef.CreateConstInt(_context.Int1Type, (ulong)(boolean.Value ? 1 : 0)),
             StructLiteralNode structLiteral => GenerateStructLiteral(structLiteral),
             ArrayLiteralNode arrayLiteral => GenerateArrayLiteral(arrayLiteral),

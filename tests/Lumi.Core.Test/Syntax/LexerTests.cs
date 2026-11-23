@@ -334,4 +334,17 @@ public class LexerTests
         Assert.That(token.Type, Is.EqualTo(TokenType.Identifier));
         Assert.That(token.Value, Is.EqualTo(name));
     }
+
+    [Test]
+    public void NextToken_Nil_IsAKeyword_ButLongerNamesAreIdentifiers()
+    {
+        Assert.That(new Lexer("nil", new DiagnosticBag(), "test.lumi").NextToken().Type,
+            Is.EqualTo(TokenType.KeywordNil));
+
+        foreach (var name in new[] { "nilly", "snil", "nil2", "Nil", "_nil", "is_nil" })
+        {
+            Assert.That(new Lexer(name, new DiagnosticBag(), "test.lumi").NextToken().Type,
+                Is.EqualTo(TokenType.Identifier), name);
+        }
+    }
 }

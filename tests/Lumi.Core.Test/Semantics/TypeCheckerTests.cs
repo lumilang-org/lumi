@@ -642,7 +642,7 @@ func main() -> void {
     bool x = p == q
     bool y = p != &a
 }");
-        var (_, _, arithmetic) = Check("func main() -> void { i32 a = 1\n *i32 p = &a\n *i32 q = p + 1 }");
+        var (_, _, arithmetic) = Check("func main() -> void { i32 a = 1\n *i32 p = &a\n *i32 q = p * 2 }");
         var (_, _, ordering) = Check("func main() -> void { i32 a = 1\n *i32 p = &a bool b = p < p }");
         var (_, _, mixed) = Check("func main() -> void { i32 a = 1\n *i32 p = &a bool b = p == a }");
 
@@ -862,5 +862,191 @@ func main() -> void { u64 v = 1 take(v) }");
         Assert.That(diagnostic.FileName, Is.EqualTo("test.lumi"));
         Assert.That(diagnostic.Message, Does.Contain("usize"));
         Assert.That(diagnostic.Span!.Start.Column, Is.EqualTo(33));
+    }
+
+    [Test]
+    public void Check_Nil_IsAssignableWhereverAPointerIsExpected()
+    {
+        var (program, model, diagnostics) = Check(@"
+struct Node { i32 value *Node next }
+func take(*i32 p) -> void { }
+func none() -> *i32 { return nil }
+func main() -> void {
+    i32 x = 1
+    *i32 p = nil
+    **i32 pp = &p
+    *(i32[2]) pa = nil
+    p = nil
+    p = &x
+    *pp = nil
+    take(nil)
+    Node n = Node { value: 1, next: nil }
+    n.next = nil
+    *i32[2] arr = [nil, p]
+    arr[0] = nil
+    *i32 q = none()
+}");
+
+        Assert.That(diagnostics.Diagnostics.Select(DiagnosticFormatter.Format), Is.Empty);
+        var decl = (VariableDeclarationNode)program.Functions[2].Body[1];
+        Assert.That(model.GetExpressionType(decl.Initializer!), Is.EqualTo("nil"));
+    }
+
+    [Test]
+    public void Check_Nil_ComparesForEqualityWithPointersAndNil()
+    {
+        var (program, model, diagnostics) = Check(@"
+func main() -> void {
+    i32 x = 1
+    *i32 p = &x
+    **i32 pp = &p
+    bool a = p == nil
+    bool b = nil == p
+    bool c = p != nil
+    bool d = nil != p
+    bool e = nil == nil
+    bool f = nil != nil
+    bool g = pp == nil
+    if p != nil { }
+}");
+
+        Assert.That(diagnostics.Diagnostics.Select(DiagnosticFormatter.Format), Is.Empty);
+        var decl = (VariableDeclarationNode)program.Functions[0].Body[3];
+        Assert.That(model.GetExpressionType(decl.Initializer!), Is.EqualTo("bool"));
+    }
+
+    [Test]
+    public void Check_Nil_IsRejectedForNonPointerTypes()
+    {
+        var sources = new[]
+        {
+            "func main() -> void { i8 x = nil }",
+            "func main() -> void { i32 x = nil }",
+            "func main() -> void { usize x = nil }",
+            "func main() -> void { u64 x = nil }",
+            "func main() -> void { bool x = nil }",
+            "func main() -> void { char x = nil }",
+            "func main() -> void { string x = nil }",
+            "func main() -> void { f32 x = nil }",
+            "struct P { i32 a }\nfunc main() -> void { P x = nil }",
+            "func main() -> void { i32[2] x = nil }",
+            "func main() -> void { i32 x = 1\n x = nil }",
+            "func take(i32 n) -> void { }\nfunc main() -> void { take(nil) }",
+            "func f() -> i32 { return nil }",
+            "struct P { i32 a }\nfunc main() -> void { P x = P { a: nil } }",
+            "func main() -> void { i32[2] x = [1, nil] }"
+        };
+
+        foreach (var source in sources)
+        {
+            var (_, _, diagnostics) = Check(source);
+
+            Assert.That(CountCode(diagnostics, DiagnosticCodes.TypeMismatch), Is.GreaterThan(0), source);
+            Assert.That(diagnostics.Diagnostics.All(d => d.FileName == "test.lumi"), Is.True, source);
+        }
+    }
+
+    [Test]
+    public void Check_Nil_IsRejectedWithUnsupportedOperators()
+    {
+        var sources = new[]
+        {
+            "func main() -> void { i32 x = 1 bool b = x == nil }",
+            "func main() -> void { bool b = nil == 0 }",
+            "func main() -> void { string s = \"a\" bool b = s != nil }",
+            "func main() -> void { *i32 p = nil bool b = nil < p }",
+            "func main() -> void { *i32 p = nil bool b = p <= nil }",
+            "func main() -> void { bool b = nil > nil }",
+            "func main() -> void { i32 n = nil + 1 }",
+            "func main() -> void { *i32 p = nil + 1 }",
+            "func main() -> void { *i32 p = nil bool b = p + nil }",
+            "func main() -> void { i32 n = -nil }",
+            "func main() -> void { bool b = !nil }",
+            "func main() -> void { bool b = nil && true }",
+            "func main() -> void { i32 n = nil & 1 }",
+            "func main() -> void { println(nil) }"
+        };
+
+        foreach (var source in sources)
+        {
+            var (_, _, diagnostics) = Check(source);
+
+            Assert.That(diagnostics.HasErrors, Is.True, source);
+        }
+    }
+
+    [Test]
+    public void Check_Nil_CannotBeDereferencedAddressedOrUpdated()
+    {
+        var (_, _, dereference) = Check("func main() -> void { i32 x = *nil }");
+        var (_, _, addressOf) = Check("func main() -> void { *i32 p = &nil }");
+        var (_, _, update) = Check("func main() -> void { nil++ }");
+
+        Assert.That(CountCode(dereference, DiagnosticCodes.InvalidDereference), Is.EqualTo(1));
+        Assert.That(CountCode(addressOf, DiagnosticCodes.InvalidAddressOperand), Is.EqualTo(1));
+        Assert.That(CountCode(update, DiagnosticCodes.InvalidUpdateTarget), Is.EqualTo(1));
+    }
+
+    [Test]
+    public void Check_Nil_DiagnosticsAreFileAwareWithSpans()
+    {
+        var (_, _, diagnostics) = Check("func main() -> void { i32 x = nil }");
+
+        var diagnostic = diagnostics.Diagnostics.Single();
+        Assert.That(diagnostic.FileName, Is.EqualTo("test.lumi"));
+        Assert.That(diagnostic.Message, Does.Contain("nil"));
+        Assert.That(diagnostic.Span!.Start.Column, Is.EqualTo(31));
+    }
+
+    [Test]
+    public void Check_PointerOffsets_KeepThePointerType()
+    {
+        var (program, model, diagnostics) = Check(@"
+func main() -> void {
+    i32[4] arr = [1, 2, 3, 4]
+    usize n = 2
+    i32 s = -1
+    *i32 p = &arr[0]
+    *i32 a = p + 1
+    *i32 b = 1 + p
+    *i32 c = p - 1
+    *i32 d = p + n
+    *i32 e = n + p
+    *i32 f = p - s
+    *i32 g = p + s
+    **i32 pp = &p
+    **i32 h = pp + 1
+    *u8 bytes = nil
+    *u8 i = bytes + 3
+}");
+
+        Assert.That(diagnostics.Diagnostics.Select(DiagnosticFormatter.Format), Is.Empty);
+        var body = program.Functions[0].Body;
+        Assert.That(model.GetExpressionType(((VariableDeclarationNode)body[4]).Initializer!), Is.EqualTo("*i32"));
+        Assert.That(model.GetExpressionType(((VariableDeclarationNode)body[11]).Initializer!), Is.EqualTo("**i32"));
+    }
+
+    [Test]
+    public void Check_PointerOffsets_RejectInvalidOperands()
+    {
+        var sources = new[]
+        {
+            "func main() -> void { *i32 p = nil\n *i32 q = p + p }",
+            "func main() -> void { *i32 p = nil\n *i32 q = 1 - p }",
+            "func main() -> void { *i32 p = nil\n *i32 q = p * 2 }",
+            "func main() -> void { *i32 p = nil\n *i32 q = p / 2 }",
+            "func main() -> void { *i32 p = nil\n *i32 q = p + 1.5 }",
+            "func main() -> void { *i32 p = nil\n *i32 q = p + true }",
+            "func main() -> void { *i32 p = nil\n *i32 q = p + 'a' }",
+            "func main() -> void { *i32 p = nil\n i32 q = p + 1 }",
+            "func main() -> void { *i32 p = nil\n *i64 q = p + 1 }"
+        };
+
+        foreach (var source in sources)
+        {
+            var (_, _, diagnostics) = Check(source);
+
+            Assert.That(CountCode(diagnostics, DiagnosticCodes.TypeMismatch), Is.GreaterThan(0), source);
+        }
     }
 }

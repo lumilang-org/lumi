@@ -3,6 +3,7 @@ namespace Lumi.Core.Syntax;
 public enum TokenType
 {
     KeywordExtern,
+    KeywordNil,
     KeywordStruct,
     KeywordFunc,
     KeywordReturn,

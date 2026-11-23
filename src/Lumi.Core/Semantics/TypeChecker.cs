@@ -330,7 +330,13 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             case PrintStatementNode printStmt:
                 // Pointers print their address; the expression type recorded here is what
                 // lets codegen tell that apart from printing the pointee.
-                CheckExpression(printStmt.Expression, scope);
+                if (CheckExpression(printStmt.Expression, scope) == TypeConst.Nil)
+                {
+                    Report(DiagnosticCodes.TypeMismatch,
+                        "Cannot print 'nil'; assign it to a pointer first.",
+                        printStmt.Expression.Span);
+                }
+
                 break;
 
             case IfStatementNode ifStatement:
@@ -605,6 +611,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
             LiteralNode<char> _ => TypeConst.Char,
             StringLiteralNode _ => TypeConst.String,
+            NilLiteralNode _ => TypeConst.Nil,
             LiteralNode<bool> _ => TypeConst.Bool,
             ArrayLiteralNode arrayLiteral => CheckArrayLiteral(arrayLiteral, scope, expectedType),
             IndexExpressionNode indexExpression => CheckIndexExpression(indexExpression, scope),
@@ -1195,6 +1202,21 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             return TypeConst.Error;
         }
 
+        // Pointer offsets: ptr + n, n + ptr and ptr - n move by n elements of the pointee type.
+        if (binary.Operator is TypeConst.Plus or TypeConst.Minus)
+        {
+            if (PointerTypes.IsPointer(leftType) && TypePromoter.IsIntegerType(rightType))
+            {
+                return leftType;
+            }
+
+            if (binary.Operator == TypeConst.Plus
+                && TypePromoter.IsIntegerType(leftType) && PointerTypes.IsPointer(rightType))
+            {
+                return rightType;
+            }
+        }
+
         if (!IsNumericType(leftType) || !IsNumericType(rightType))
         {
             return ReportErrorAndReturn(DiagnosticCodes.TypeMismatch,
@@ -1248,6 +1270,22 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
         if (leftType == TypeConst.Error || rightType == TypeConst.Error)
         {
+            return TypeConst.Bool;
+        }
+
+        // nil only compares (for equality) with pointers and with nil.
+        if (leftType == TypeConst.Nil || rightType == TypeConst.Nil)
+        {
+            var other = leftType == TypeConst.Nil ? rightType : leftType;
+
+            if (!isEquality || (other != TypeConst.Nil && !PointerTypes.IsPointer(other)))
+            {
+                Report(DiagnosticCodes.TypeMismatch,
+                    $"Type Mismatch: Operator '{binary.Operator}' " +
+                    $"cannot compare types '{leftType}' and '{rightType}'.",
+                    binary.Span);
+            }
+
             return TypeConst.Bool;
         }
 
@@ -1547,6 +1585,12 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         ExpressionNode expression)
     {
         if (targetType == sourceType)
+        {
+            return true;
+        }
+
+        // nil is a null pointer of any pointer type, and nothing else.
+        if (sourceType == TypeConst.Nil && PointerTypes.IsPointer(targetType))
         {
             return true;
         }

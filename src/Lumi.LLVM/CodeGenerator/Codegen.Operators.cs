@@ -86,7 +86,8 @@ public sealed partial class Codegen
                 "str.cmptmp");
         }
 
-        if (PointerTypes.IsPointer(_semanticModel.GetExpressionType(binary.Left))
+        if (IsPointerOrNil(_semanticModel.GetExpressionType(binary.Left))
+            && IsPointerOrNil(_semanticModel.GetExpressionType(binary.Right))
             && binary.Operator is TypeConst.EqualsEquals or TypeConst.BangEquals)
         {
             return _builder.BuildICmp(
@@ -96,6 +97,13 @@ public sealed partial class Codegen
                 left,
                 right,
                 "ptr.cmptmp");
+        }
+
+        if (binary.Operator is TypeConst.Plus or TypeConst.Minus
+            && (PointerTypes.IsPointer(_semanticModel.GetExpressionType(binary.Left))
+                || PointerTypes.IsPointer(_semanticModel.GetExpressionType(binary.Right))))
+        {
+            return GeneratePointerOffset(binary, left, right);
         }
 
         if (left.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind
@@ -298,6 +306,41 @@ public sealed partial class Codegen
             _ => throw new NotSupportedException(
                 $"Unsupported integer operator: {binary.Operator}")
         };
+    }
+
+    private static bool IsPointerOrNil(string type)
+    {
+        return type == TypeConst.Nil || PointerTypes.IsPointer(type);
+    }
+
+    // ptr + n, n + ptr, ptr - n: advance by n elements of the pointee type.
+    private LLVMValueRef GeneratePointerOffset(
+        BinaryExpressionNode binary,
+        LLVMValueRef left,
+        LLVMValueRef right)
+    {
+        var leftType = _semanticModel.GetExpressionType(binary.Left);
+        var rightType = _semanticModel.GetExpressionType(binary.Right);
+        var pointerOnLeft = PointerTypes.IsPointer(leftType);
+
+        var pointer = pointerOnLeft ? left : right;
+        var pointerType = pointerOnLeft ? leftType : rightType;
+        var offset = pointerOnLeft ? right : left;
+        var offsetType = pointerOnLeft ? rightType : leftType;
+
+        // Signed offsets are sign-extended and unsigned ones zero-extended to 64 bits.
+        var index = _llvmTypeHelper.ConvertInteger(offset, offsetType, TypeConst.I64);
+
+        if (binary.Operator == TypeConst.Minus)
+        {
+            index = _builder.BuildNeg(index, "ptr.negoffset");
+        }
+
+        return _builder.BuildGEP2(
+            ResolveType(PointerTypes.Pointee(pointerType)),
+            pointer,
+            new[] { index },
+            "ptr.offset");
     }
 
     private bool IsUnsignedIntegerType(ExpressionNode expression)

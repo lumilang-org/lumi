@@ -85,8 +85,10 @@ func bump(*i32 n) -> void { *n = *n + 1 }
 * **`&expr`** yields `*T` for an `expr` of type `T`. `expr` must be a variable, parameter, struct field, array element or dereference (`&x`, `&p.x`, `&arr[1]`, `&*p`). Literals, call results and arithmetic (`&5`, `&f()`, `&(x + 1)`) are rejected. `&s[i]` on a string gives a `*char` into the string's read-only bytes: read it, never write through it.
 * **`*expr`** requires a pointer `*T` and yields `T`. It is also an assignment target (`*p = v`, `**pp = v`) and works with `++`/`--` (`(*p)++`).
 * **Structs and arrays:** there is no automatic dereference. Use `(*p).x` and `(*a)[i]`. A pointer to an array is written `*(i32[3])` (this is also the type of `&arr`); `*i32[3]` means an array of three `*i32`.
-* **Comparison:** pointers of the same type can be compared with `==` and `!=` (address equality). There is no pointer arithmetic or ordering. `print`/`println` on a pointer print its address, not the pointee.
-* **Limits:** there is no `null` and no pointer to `void`; a pointer is not tracked after creation, so keeping one past the lifetime of the variable it points to (for example returning `&local`) is undefined behavior. Pointers cannot be converted between types.
+* **`nil`:** the null pointer. It can be assigned, passed, returned or used as a struct field or array element wherever a `*T` is expected, and compared with `==`/`!=` against any pointer (either operand order, or against another `nil`). It is not a type of its own: `i32 x = nil`, `bool b = x == nil` for a non-pointer `x`, `nil < p`, `nil + 1`, `*nil` and `print(nil)` are errors.
+* **Comparison:** pointers of the same type can be compared with `==` and `!=` (address equality). There is no pointer ordering. `print`/`println` on a pointer print its address, not the pointee (`0x0` for `nil`).
+* **Arithmetic:** `p + n`, `n + p` and `p - n` (with `n` any integer type, negative values included) advance the pointer by `n` elements of the pointee type, so `*i32 + 1` moves 4 bytes and `*u8 + 1` moves 1. There is no pointer subtraction (`p - q`) and no bounds checking; going outside the pointed-to object is undefined behavior.
+* **Limits:** there is no pointer to `void`; a pointer is not tracked after creation, so keeping one past the lifetime of the variable it points to (for example returning `&local`) is undefined behavior. Pointers cannot be converted between types.
 * **Parsing note:** statements have no terminator, so a `*` that starts a new line **and** whose line contains an `=` begins a new statement (`*p = 1`) instead of continuing the previous line as a multiplication. A `(` on a new line is never a call.
 
 ---
@@ -265,7 +267,9 @@ Unsigned integers (`u8`..`u64`, `usize`) print as unsigned values. `expr` may be
 
 ## 9. Standard Library
 
-Standard modules live in the `std/` folder, which is copied next to the compiler, so `import std::string` works from any directory. `std::string` provides non-allocating helpers:
+Standard modules live in the `std/` folder, which is copied next to the compiler, so `import std::string` works from any directory. `std::mem` provides a bump-pointer `Arena` on top of `extern` `malloc`/`free`: `arena_init(*Arena, usize) -> bool`, `arena_alloc(*Arena, usize size, usize align) -> *u8` (returns `nil` when the request does not fit or `align` is not a power of two), `arena_reset` and `arena_destroy`. `arena.buf` is `nil` whenever the arena owns no memory.
+
+`std::string` provides non-allocating helpers:
 
 | Function | Description |
 | :--- | :--- |

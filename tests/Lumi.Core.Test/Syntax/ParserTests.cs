@@ -478,4 +478,62 @@ func main() -> void {
         Assert.That(program.Functions[0].Body[1], Is.InstanceOf<PrintStatementNode>());
         Assert.That(((PrintStatementNode)program.Functions[0].Body[2]).AppendNewLine, Is.True);
     }
+
+    [Test]
+    public void Parse_Nil_ProducesNilLiteralNodeWithSpan()
+    {
+        var program = Parse("func main() -> void { *i32 p = nil }");
+
+        var init = ((VariableDeclarationNode)program.Functions[0].Body[0]).Initializer;
+        var nil = init as NilLiteralNode;
+        Assert.That(nil, Is.Not.Null);
+        Assert.That(nil.Span.Start.Column, Is.EqualTo(32));
+        Assert.That(nil.Span.End.Column - nil.Span.Start.Column, Is.EqualTo(3));
+    }
+
+    [Test]
+    public void Parse_Nil_InEveryExpressionPosition()
+    {
+        var program = Parse(@"
+struct Node { i32 value *Node next }
+func take(*i32 p) -> *i32 { return nil }
+func main() -> void {
+    *i32 p = nil
+    p = nil
+    *p = 1
+    bool a = p == nil
+    bool b = nil != p
+    bool c = nil == nil
+    take(nil)
+    Node n = Node { value: 1, next: nil }
+    n.next = nil
+    *i32[2] arr = [nil, p]
+}");
+        var body = program.Functions[1].Body;
+
+        Assert.That(((ReturnStatementNode)program.Functions[0].Body[0]).Expression, Is.InstanceOf<NilLiteralNode>());
+        Assert.That(((AssignmentStatementNode)body[1]).Value, Is.InstanceOf<NilLiteralNode>());
+        Assert.That(((BinaryExpressionNode)((VariableDeclarationNode)body[3]).Initializer!).Right,
+            Is.InstanceOf<NilLiteralNode>());
+        Assert.That(((BinaryExpressionNode)((VariableDeclarationNode)body[4]).Initializer!).Left,
+            Is.InstanceOf<NilLiteralNode>());
+        var both = (BinaryExpressionNode)((VariableDeclarationNode)body[5]).Initializer!;
+        Assert.That(both.Left, Is.InstanceOf<NilLiteralNode>());
+        Assert.That(both.Right, Is.InstanceOf<NilLiteralNode>());
+        var call = (FunctionCallExpressionNode)((ExpressionStatementNode)body[6]).Expression;
+        Assert.That(call.Arguments[0], Is.InstanceOf<NilLiteralNode>());
+        var literal = (StructLiteralNode)((VariableDeclarationNode)body[7]).Initializer!;
+        Assert.That(literal.Initializers[1].Value, Is.InstanceOf<NilLiteralNode>());
+        Assert.That(((TargetAssignmentStatementNode)body[8]).Value, Is.InstanceOf<NilLiteralNode>());
+        var array = (ArrayLiteralNode)((VariableDeclarationNode)body[9]).Initializer!;
+        Assert.That(array.Elements[0], Is.InstanceOf<NilLiteralNode>());
+    }
+
+    [Test]
+    public void Parse_NilBeforeABlock_DoesNotStartAStructLiteral()
+    {
+        var program = Parse("func main() -> void { *i32 p = nil\n if p == nil { println(1) } }");
+
+        Assert.That(program.Functions[0].Body[1], Is.InstanceOf<IfStatementNode>());
+    }
 }

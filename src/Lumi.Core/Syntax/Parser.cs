@@ -960,6 +960,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
                 return ParseCharLiteral();
             case TokenType.String:
                 return ParseStringLiteral();
+            case TokenType.KeywordNil:
+                return new NilLiteralNode(Consume(TokenType.KeywordNil).Span);
             case TokenType.BooleanLiteral:
                 return ParseBooleanLiteral();
             case TokenType.LParen:
