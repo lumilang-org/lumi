@@ -143,8 +143,20 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
     public ProgramNode ParseProgram()
     {
+        ModuleDeclarationNode? module = null;
+        var imports = new List<ImportDeclarationNode>();
         var functions = new List<FunctionDeclarationNode>();
         var structs = new List<StructDeclarationNode>();
+
+        if (Current.Type == TokenType.KeywordModule)
+        {
+            module = ParseModuleDeclaration();
+        }
+
+        while (Current.Type == TokenType.KeywordImport)
+        {
+            imports.Add(ParseImportDeclaration());
+        }
 
         while (Current.Type != TokenType.EndOfFile)
         {
@@ -175,13 +187,50 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             }
         }
 
-        var span = functions.Count > 0
-            ? CreateSpan(
-                functions[0].Span!.Start,
-                functions[^1].Span!.End)
-            : Current.Span;
+        var startSpan = module?.Span ?? (imports.Count > 0 ? imports[0].Span :
+            functions.Count > 0 ? functions[0].Span :
+            structs.Count > 0 ? structs[0].Span : Current.Span);
+        var endSpan = structs.Count > 0 ? structs[^1].Span :
+            functions.Count > 0 ? functions[^1].Span :
+            imports.Count > 0 ? imports[^1].Span : module?.Span ?? Current.Span;
 
-        return new ProgramNode(functions, structs, span);
+        var span = CreateSpan(startSpan.Start, endSpan.End);
+
+        return new ProgramNode(module, imports, functions, structs, span);
+    }
+
+    private ModuleDeclarationNode ParseModuleDeclaration()
+    {
+        var start = Consume(TokenType.KeywordModule);
+        var path = new List<string>();
+
+        path.Add(Consume(TokenType.Identifier).Value);
+
+        while (Current.Type == TokenType.DoubleColon)
+        {
+            Consume(TokenType.DoubleColon);
+            path.Add(Consume(TokenType.Identifier).Value);
+        }
+
+        var end = Peek(-1); // Last consumed identifier
+        return new ModuleDeclarationNode(path, CreateSpan(start.Span.Start, end.Span.End));
+    }
+
+    private ImportDeclarationNode ParseImportDeclaration()
+    {
+        var start = Consume(TokenType.KeywordImport);
+        var path = new List<string>();
+
+        path.Add(Consume(TokenType.Identifier).Value);
+
+        while (Current.Type == TokenType.DoubleColon)
+        {
+            Consume(TokenType.DoubleColon);
+            path.Add(Consume(TokenType.Identifier).Value);
+        }
+
+        var end = Peek(-1); // Last consumed identifier
+        return new ImportDeclarationNode(path, CreateSpan(start.Span.Start, end.Span.End));
     }
 
     private void SynchronizeTopLevel()
@@ -307,6 +356,12 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         var typeName = Current.Value;
         Advance();
 
+        while (Current.Type == TokenType.DoubleColon)
+        {
+            Consume(TokenType.DoubleColon);
+            typeName += "::" + Consume(TokenType.Identifier).Value;
+        }
+
         while (Current.Type == TokenType.LBracket)
         {
             Consume(TokenType.LBracket);
@@ -367,8 +422,19 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         }
 
         // It's an identifier. Check if it's followed by another identifier (e.g., Vec p)
-        // or a bracket (e.g., Vec[2] p)
+        // or a bracket (e.g., Vec[2] p) or double colon (e.g., std::Vec p)
         var offset = 1;
+        while (Peek(offset).Type == TokenType.DoubleColon)
+        {
+            offset++; // Consume '::'
+            if (Peek(offset).Type != TokenType.Identifier)
+            {
+                return false;
+            }
+
+            offset++; // Consume identifier
+        }
+
         while (Peek(offset).Type == TokenType.LBracket)
         {
             offset++; // Consume '['
@@ -869,19 +935,24 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
     private ExpressionNode ParseIdentifier()
     {
-        var identifierToken = Current;
-        var name = identifierToken.Value;
-
+        var startToken = Current;
+        var name = startToken.Value;
         Advance();
+
+        while (Current.Type == TokenType.DoubleColon)
+        {
+            Consume(TokenType.DoubleColon);
+            name += "::" + Consume(TokenType.Identifier).Value;
+        }
 
         if (Current.Type == TokenType.LBrace)
         {
-            return ParseStructLiteral(identifierToken);
+            return ParseStructLiteral(startToken with { Value = name });
         }
 
         if (Current.Type != TokenType.LParen)
         {
-            return new IdentifierNode(name, identifierToken.Span);
+            return new IdentifierNode(name, CreateSpan(startToken.Span.Start, Peek(-1).Span.End));
         }
 
         Consume(TokenType.LParen);
@@ -906,7 +977,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         var closingParen = Consume(TokenType.RParen);
 
         var span = CreateSpan(
-            identifierToken.Span.Start,
+            startToken.Span.Start,
             closingParen.Span.End);
 
         return new FunctionCallExpressionNode(name, arguments, span);

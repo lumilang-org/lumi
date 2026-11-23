@@ -8,8 +8,12 @@ namespace Lumi.Core.Semantics;
 
 public sealed class TypeChecker(DiagnosticBag diagnostic)
 {
+    private readonly Dictionary<string, string> _moduleContexts = new();
     private readonly ReturnAnalyzer _returnAnalyzer = new();
     private readonly Dictionary<string, StructDeclarationNode> _structs = new();
+    private IReadOnlyList<ImportDeclarationNode> _currentImports = [];
+
+    private string _currentModulePrefix = "";
     private int _loopDepth;
     public SemanticModel SemanticModel { get; } = new();
     private FunctionRegistry Functions => SemanticModel.Functions;
@@ -45,47 +49,130 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         }
     }
 
-    public void CheckProgram(ProgramNode program)
+    public void CheckCompilationUnit(IReadOnlyList<ProgramNode> modules)
     {
         _structs.Clear();
+        Functions.Clear(); // Assuming I add a Clear method to FunctionRegistry or handle it here
 
-        foreach (var structDecl in program.Structs)
+        // 1. Pass: Register all modules and their symbols (mangled)
+        foreach (var module in modules)
         {
-            if (!_structs.TryAdd(structDecl.Name, structDecl))
+            var modulePrefix = module.Module != null ? string.Join("::", module.Module.PathSegments) : "";
+
+            foreach (var structDecl in module.Structs)
             {
-                Report(DiagnosticCodes.TypeMismatch,
-                    $"Struct '{structDecl.Name}' is already declared.",
-                    structDecl.Span);
+                var mangledName = MangleName(modulePrefix, structDecl.Name);
+                if (!_structs.TryAdd(mangledName, structDecl))
+                {
+                    Report(DiagnosticCodes.TypeMismatch, $"Struct '{mangledName}' is already declared.",
+                        structDecl.Span);
+                }
+
+                SemanticModel.SetMangledName(structDecl, mangledName);
+            }
+
+            foreach (var func in module.Functions)
+            {
+                var mangledName = func.Name == "main" ? "main" : MangleName(modulePrefix, func.Name);
+                var signature = new FunctionSignature(
+                    mangledName,
+                    func.Parameters.Select(p => p.Type).ToArray(),
+                    func.ReturnType);
+
+                if (!Functions.TryRegister(signature))
+                {
+                    Report(DiagnosticCodes.DuplicateFunction, $"Function '{mangledName}' is already declared.",
+                        func.Span);
+                }
+
+                SemanticModel.SetMangledName(func, mangledName);
             }
         }
 
-        foreach (var structDecl in program.Structs)
+        // 2. Pass: Check bodies with cross-module resolution
+        foreach (var module in modules)
         {
-            foreach (var field in structDecl.Fields)
+            var modulePrefix = module.Module != null ? string.Join("::", module.Module.PathSegments) : "";
+            _currentModulePrefix = modulePrefix;
+            _currentImports = module.Imports;
+
+            foreach (var structDecl in module.Structs)
             {
-                ValidateType(field.Type, field.Span);
+                foreach (var field in structDecl.Fields)
+                {
+                    ValidateType(field.Type, field.Span);
+                }
+            }
+
+            foreach (var func in module.Functions)
+            {
+                CheckFunction(func);
+            }
+        }
+    }
+
+    private string MangleName(string prefix, string name)
+    {
+        return string.IsNullOrEmpty(prefix) ? name : $"{prefix.Replace("::", "_")}_{name}";
+    }
+
+    private string ResolveSymbolName(string name)
+    {
+        // 1. Try local module
+        var localMangled = MangleName(_currentModulePrefix, name);
+        if (Functions.Contains(localMangled) || _structs.ContainsKey(localMangled))
+        {
+            return localMangled;
+        }
+
+        // 2. Try imports
+        foreach (var import in _currentImports)
+        {
+            var importPrefix = string.Join("::", import.PathSegments);
+
+            // Handle qualified names like "math::add" or "std::math::add"
+            // where "math" or "std::math" is in the imports.
+            if (name.Contains("::"))
+            {
+                var parts = name.Split("::");
+                // Check if the prefix of the name matches the import prefix
+                // e.g. import math; math::add -> std::math_add
+                if (import.PathSegments.SequenceEqual(parts.Take(parts.Length - 1)) ||
+                    import.PathSegments.Last() == parts[0])
+                {
+                    // This is simplified. Let's try to just mangle the whole name and see if it hits.
+                    var mangled = name.Replace("::", "_");
+                    if (Functions.Contains(mangled) || _structs.ContainsKey(mangled))
+                    {
+                        return mangled;
+                    }
+
+                    // Try adding the full import prefix if parts[0] is just the last segment
+                    if (import.PathSegments.Last() == parts[0] && import.PathSegments.Count > 1)
+                    {
+                        var fullMangled = string.Join("_", import.PathSegments) + "_" + string.Join("_", parts.Skip(1));
+                        if (Functions.Contains(fullMangled) || _structs.ContainsKey(fullMangled))
+                        {
+                            return fullMangled;
+                        }
+                    }
+                }
+            }
+
+            var mangledSimple = MangleName(importPrefix, name);
+            if (Functions.Contains(mangledSimple) || _structs.ContainsKey(mangledSimple))
+            {
+                return mangledSimple;
             }
         }
 
-        foreach (var func in program.Functions)
-        {
-            var signature = new FunctionSignature(
-                func.Name,
-                func.Parameters.Select(parameter => parameter.Type).ToArray(),
-                func.ReturnType);
+        // 3. Fallback to unmangled (for built-ins or main)
+        return name.Replace("::", "_");
+    }
 
-            if (!Functions.TryRegister(signature))
-            {
-                Report(DiagnosticCodes.DuplicateFunction,
-                    $"Function '{func.Name}' is already declared.",
-                    func.Span);
-            }
-        }
-
-        foreach (var func in program.Functions)
-        {
-            CheckFunction(func);
-        }
+    public void CheckProgram(ProgramNode program)
+    {
+        CheckCompilationUnit([program]);
     }
 
     private void CheckStatement(StatementNode statement, SymbolTable scope, string expectedReturnType)
@@ -458,7 +545,8 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         StructLiteralNode literal,
         SymbolTable scope)
     {
-        if (!_structs.TryGetValue(literal.StructName, out var structDecl))
+        var resolvedName = ResolveSymbolName(literal.StructName);
+        if (!_structs.TryGetValue(resolvedName, out var structDecl))
         {
             Report(DiagnosticCodes.TypeMismatch,
                 $"Unknown struct type '{literal.StructName}'.",
@@ -471,6 +559,9 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
             return TypeConst.Error;
         }
+
+        SemanticModel.SetMangledName(literal, resolvedName);
+        SemanticModel.SetExpressionType(literal, resolvedName);
 
         var declaredFields = structDecl.Fields.ToDictionary(f => f.Name, f => f.Type);
         var seenFields = new HashSet<string>();
@@ -575,7 +666,8 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         FunctionCallExpressionNode functionCall,
         SymbolTable scope)
     {
-        if (!Functions.TryGet(functionCall.Name, out var signature))
+        var resolvedName = ResolveSymbolName(functionCall.Name);
+        if (!Functions.TryGet(resolvedName, out var signature))
         {
             Report(DiagnosticCodes.UndefinedFunction,
                 $"Function '{functionCall.Name}' is not declared.",
@@ -589,6 +681,8 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
             return TypeConst.Error;
         }
+
+        SemanticModel.SetMangledName(functionCall, resolvedName);
 
         if (functionCall.Arguments.Count != signature.ParameterTypes.Count)
         {
@@ -1157,8 +1251,13 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             IsFloatingPointType(type) ||
             type == TypeConst.Bool ||
             type == TypeConst.Char ||
-            type == TypeConst.Void ||
-            _structs.ContainsKey(type))
+            type == TypeConst.Void)
+        {
+            return;
+        }
+
+        var resolvedType = ResolveSymbolName(type);
+        if (_structs.ContainsKey(resolvedType))
         {
             return;
         }

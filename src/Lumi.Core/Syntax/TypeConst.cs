@@ -3,6 +3,8 @@ namespace Lumi.Core.Syntax;
 public static class TypeConst
 {
     public const string Void = "void";
+    public const string Import = "import";
+    public const string Module = "module";
     public const string I8 = "i8";
     public const string I16 = "i16";
     public const string I32 = "i32";
@@ -22,8 +24,10 @@ public static class TypeConst
     public const string Minus = "-";
     public const string Star = "*";
     public const string Slash = "/";
+    public const string Func = "func";
     public const string Equals = "=";
     public const string Semicolon = ";";
+    public const string Colon = ":";
     public const string EqualsEquals = "==";
     public const string BangEquals = "!=";
     public const string LessThan = "<";

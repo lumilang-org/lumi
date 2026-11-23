@@ -214,10 +214,14 @@ public sealed class FunctionParameterNode(
 }
 
 public sealed class ProgramNode(
+    ModuleDeclarationNode? module,
+    IReadOnlyList<ImportDeclarationNode> imports,
     IReadOnlyList<FunctionDeclarationNode> functions,
     IReadOnlyList<StructDeclarationNode> structs,
     SourceSpan span) : ASTNode(span)
 {
+    public ModuleDeclarationNode? Module { get; } = module;
+    public IReadOnlyList<ImportDeclarationNode> Imports { get; } = imports;
     public IReadOnlyList<FunctionDeclarationNode> Functions { get; } = functions;
     public IReadOnlyList<StructDeclarationNode> Structs { get; } = structs;
 }
@@ -246,4 +250,20 @@ public sealed class FunctionCallExpressionNode(
 {
     public string Name { get; } = name;
     public IReadOnlyList<ExpressionNode> Arguments { get; } = arguments;
+}
+
+public sealed class ModuleDeclarationNode(
+    IReadOnlyList<string> pathSegments,
+    SourceSpan span)
+    : ASTNode(span)
+{
+    public IReadOnlyList<string> PathSegments { get; } = pathSegments;
+}
+
+public sealed class ImportDeclarationNode(
+    IReadOnlyList<string> pathSegments,
+    SourceSpan span)
+    : ASTNode(span)
+{
+    public IReadOnlyList<string> PathSegments { get; } = pathSegments;
 }

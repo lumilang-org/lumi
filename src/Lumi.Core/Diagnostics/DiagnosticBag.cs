@@ -13,4 +13,9 @@ public sealed class DiagnosticBag
     {
         _diagnostics.Add(diagnostic);
     }
+
+    public void Report(string code, string message, SourceSpan? span = null)
+    {
+        Report(new Diagnostic(code, DiagnosticSeverity.Error, message, span));
+    }
 }

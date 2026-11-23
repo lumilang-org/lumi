@@ -11,6 +11,8 @@ public enum TokenType
     KeywordBreak,
     KeywordContinue,
     KeywordElse,
+    KeywordImport,
+    KeywordModule,
     PrintFunc,
 
     TypeByte,
@@ -45,6 +47,7 @@ public enum TokenType
     Comma,
     Dot,
     Colon,
+    DoubleColon,
     Semicolon,
     LBrace,
     RBrace,

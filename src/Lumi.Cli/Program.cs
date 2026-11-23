@@ -1,6 +1,5 @@
 ﻿using Lumi.Core.Diagnostics;
 using Lumi.Core.Semantics;
-using Lumi.Core.Syntax;
 using Lumi.LLVM.CodeGenerator;
 
 const string outputFile = "lumi.o";
@@ -24,25 +23,8 @@ var lumiCode = File.ReadAllText(sourceCodePath);
 Console.WriteLine("--- Initialising Lumi Lexer ---");
 
 var diagnostics = new DiagnosticBag();
-
-var lexer = new Lexer(lumiCode);
-List<Token> tokens = [];
-
-Token token;
-
-do
-{
-    token = lexer.NextToken();
-    tokens.Add(token);
-
-    Console.WriteLine(
-        $"{token.Type,-20} {token.Value,-12} " +
-        $"{token.Span.Start.Line}:{token.Span.Start.Column} - " +
-        $"{token.Span.End.Line}:{token.Span.End.Column}");
-} while (token.Type != TokenType.EndOfFile);
-
-var parser = new Parser(tokens, diagnostics);
-var programAst = parser.ParseProgram();
+var loader = new ModuleLoader(diagnostics);
+var modules = loader.Load(sourceCodePath);
 
 if (diagnostics.HasErrors)
 {
@@ -51,7 +33,7 @@ if (diagnostics.HasErrors)
 }
 
 var checker = new TypeChecker(diagnostics);
-checker.CheckProgram(programAst);
+checker.CheckCompilationUnit(modules);
 
 if (diagnostics.HasErrors)
 {
@@ -62,7 +44,7 @@ if (diagnostics.HasErrors)
 Console.WriteLine("\n--- Emitting Native LLVM IR ---");
 
 var generator = new Codegen("LumiModule", checker.SemanticModel);
-generator.GenerateProgram(programAst);
+generator.GenerateCompilationUnit(modules);
 
 generator.DumpModuleToConsole();
 

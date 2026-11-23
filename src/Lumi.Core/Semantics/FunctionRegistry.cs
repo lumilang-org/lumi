@@ -18,4 +18,9 @@ public sealed class FunctionRegistry
     {
         return _functions.ContainsKey(name);
     }
+
+    public void Clear()
+    {
+        _functions.Clear();
+    }
 }

@@ -8,8 +8,10 @@ public sealed class Lexer
     {
         { "print", TokenType.PrintFunc },
         { "println", TokenType.PrintFunc },
+        { TypeConst.Module, TokenType.KeywordModule },
+        { TypeConst.Import, TokenType.KeywordImport },
         { TypeConst.Struct, TokenType.KeywordStruct },
-        { "func", TokenType.KeywordFunc },
+        { TypeConst.Func, TokenType.KeywordFunc },
         { TypeConst.Return, TokenType.KeywordReturn },
         { TypeConst.While, TokenType.KeywordWhile },
         { TypeConst.For, TokenType.KeywordFor },
@@ -312,7 +314,14 @@ public sealed class Lexer
 
             case ':':
                 Advance();
-                return CreateToken(TokenType.Colon, ":", start);
+
+                if (_currentChar != ':')
+                {
+                    return CreateToken(TokenType.Colon, ":", start);
+                }
+
+                Advance();
+                return CreateToken(TokenType.DoubleColon, "::", start);
 
             case '.':
                 Advance();
@@ -395,6 +404,22 @@ public sealed class Lexer
     private bool IsAtEnd()
     {
         return _position >= _source.Length;
+    }
+
+    public IReadOnlyList<Token> Tokenize()
+    {
+        var tokens = new List<Token>();
+        while (!IsAtEnd())
+        {
+            var token = NextToken();
+            if (token.Type != TokenType.EndOfFile)
+            {
+                tokens.Add(token);
+            }
+        }
+
+        tokens.Add(CreateToken(TokenType.EndOfFile, "", new SourceLocation(_line, _column)));
+        return tokens;
     }
 
     private Token CreateToken(

@@ -40,34 +40,50 @@ public sealed class Codegen
 
     public void GenerateProgram(ProgramNode program)
     {
-        RegisterStructs(program);
+        GenerateCompilationUnit([program]);
+    }
 
-        // Declare every function in the LLVM module.
-        foreach (var funcNode in program.Functions)
+    public void GenerateCompilationUnit(IReadOnlyList<ProgramNode> modules)
+    {
+        foreach (var module in modules)
         {
-            var returnType = ResolveType(funcNode.ReturnType);
-
-            var parameterTypes = funcNode.Parameters
-                .Select(parameter => ResolveType(parameter.Type))
-                .ToArray();
-
-            var functionType = LLVMTypeRef.CreateFunction(
-                returnType,
-                parameterTypes);
-
-            var function = _module.AddFunction(
-                funcNode.Name,
-                functionType);
-
-            _functions.Add(
-                funcNode.Name,
-                (function, functionType));
+            RegisterStructs(module);
         }
 
-        foreach (var funcNode in program.Functions)
+        // Declare every function in the LLVM module.
+        foreach (var module in modules)
         {
-            var function = _functions[funcNode.Name].Function;
-            GenerateFunctionBody(funcNode, function);
+            foreach (var funcNode in module.Functions)
+            {
+                var mangledName = _semanticModel.GetMangledName(funcNode);
+                var returnType = ResolveType(funcNode.ReturnType);
+
+                var parameterTypes = funcNode.Parameters
+                    .Select(parameter => ResolveType(parameter.Type))
+                    .ToArray();
+
+                var functionType = LLVMTypeRef.CreateFunction(
+                    returnType,
+                    parameterTypes);
+
+                var function = _module.AddFunction(
+                    mangledName,
+                    functionType);
+
+                _functions.Add(
+                    mangledName,
+                    (function, functionType));
+            }
+        }
+
+        foreach (var module in modules)
+        {
+            foreach (var funcNode in module.Functions)
+            {
+                var mangledName = _semanticModel.GetMangledName(funcNode);
+                var function = _functions[mangledName].Function;
+                GenerateFunctionBody(funcNode, function);
+            }
         }
 
         _module.Verify(LLVMVerifierFailureAction.LLVMPrintMessageAction);
@@ -659,9 +675,14 @@ public sealed class Codegen
     private LLVMValueRef GenerateStructLiteral(StructLiteralNode literal)
     {
         var typeName = _semanticModel.GetExpressionType(literal);
-        if (!_structLayouts.TryGetValue(typeName, out var structLayout))
+        var mangledName = _semanticModel.GetMangledName(literal);
+        // If it's a struct literal, the expression type might be the original name, but the layout is stored under mangled name.
+        // Actually TypeChecker.CheckStructLiteral sets the expression type.
+        // Let's try mangled name first, then typeName.
+        if (!_structLayouts.TryGetValue(mangledName, out var structLayout) &&
+            !_structLayouts.TryGetValue(typeName, out structLayout))
         {
-            throw new Exception($"Codegen Error: Struct layout for '{typeName}' not found.");
+            throw new Exception($"Codegen Error: Struct layout for '{typeName}' (mangled: '{mangledName}') not found.");
         }
 
         var alloca = _builder.BuildAlloca(structLayout.StructType, "struct_literal");
@@ -723,20 +744,21 @@ public sealed class Codegen
     private LLVMValueRef GenerateFunctionCall(
         FunctionCallExpressionNode functionCall)
     {
-        if (!_functions.TryGetValue(functionCall.Name, out var functionInfo))
+        var mangledName = _semanticModel.GetMangledName(functionCall);
+        if (!_functions.TryGetValue(mangledName, out var functionInfo))
         {
             throw new Exception(
-                $"Codegen Error: Function '{functionCall.Name}' was not declared.");
+                $"Codegen Error: Function '{functionCall.Name}' (mangled: '{mangledName}') was not declared.");
         }
 
-        if (!_semanticModel.Functions.TryGet(functionCall.Name, out var signature))
+        if (!_semanticModel.Functions.TryGet(mangledName, out var signature))
         {
             throw new Exception(
-                $"Codegen Error: Function '{functionCall.Name}' was not found in SemanticModel.");
+                $"Codegen Error: Function '{functionCall.Name}' (mangled: '{mangledName}') was not found in SemanticModel.");
         }
 
         var arguments = new LLVMValueRef[functionCall.Arguments.Count];
-        for (int i = 0; i < functionCall.Arguments.Count; i++)
+        for (var i = 0; i < functionCall.Arguments.Count; i++)
         {
             var argExpr = functionCall.Arguments[i];
             var argValue = GenerateExpression(argExpr);
@@ -1138,6 +1160,13 @@ public sealed class Codegen
             return structLayout.StructType;
         }
 
+        // Try mangled name
+        var mangled = typeName.Replace("::", "_");
+        if (_structLayouts.TryGetValue(mangled, out structLayout))
+        {
+            return structLayout.StructType;
+        }
+
         return typeName switch
         {
             TypeConst.I8 or TypeConst.U8 => _context.Int8Type,
@@ -1468,19 +1497,19 @@ public sealed class Codegen
 
     private void RegisterStructs(ProgramNode program)
     {
-        _structLayouts.Clear();
-
         var namedTypes = new Dictionary<string, LLVMTypeRef>();
 
         foreach (var structNode in program.Structs)
         {
-            var llvmStruct = _context.CreateNamedStruct(structNode.Name);
-            namedTypes[structNode.Name] = llvmStruct;
+            var mangledName = _semanticModel.GetMangledName(structNode);
+            var llvmStruct = _context.CreateNamedStruct(mangledName);
+            namedTypes[mangledName] = llvmStruct;
         }
 
         // Store partial/opaque types first so nested struct fields can resolve them
         foreach (var structNode in program.Structs)
         {
+            var mangledName = _semanticModel.GetMangledName(structNode);
             var fieldsByName = new Dictionary<string, StructFieldLayout>();
             var orderedFields = new List<StructFieldLayout>();
 
@@ -1492,9 +1521,9 @@ public sealed class Codegen
                 fieldsByName[field.Name] = layout;
             }
 
-            _structLayouts[structNode.Name] = new StructLayoutInfo(
-                structNode.Name,
-                namedTypes[structNode.Name],
+            _structLayouts[mangledName] = new StructLayoutInfo(
+                mangledName,
+                namedTypes[mangledName],
                 orderedFields,
                 fieldsByName);
         }
@@ -1502,7 +1531,8 @@ public sealed class Codegen
         // Set struct bodies now that every struct type exists
         foreach (var structNode in program.Structs)
         {
-            var info = _structLayouts[structNode.Name];
+            var mangledName = _semanticModel.GetMangledName(structNode);
+            var info = _structLayouts[mangledName];
             var fieldLlvmTypes = new LLVMTypeRef[structNode.Fields.Count];
             var updatedOrdered = new List<StructFieldLayout>(structNode.Fields.Count);
             var updatedByName = new Dictionary<string, StructFieldLayout>(structNode.Fields.Count);
@@ -1520,8 +1550,8 @@ public sealed class Codegen
 
             info.StructType.StructSetBody(fieldLlvmTypes, false);
 
-            _structLayouts[structNode.Name] = new StructLayoutInfo(
-                structNode.Name,
+            _structLayouts[mangledName] = new StructLayoutInfo(
+                mangledName,
                 info.StructType,
                 updatedOrdered,
                 updatedByName);

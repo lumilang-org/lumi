@@ -90,4 +90,24 @@ public class ParserTests
         Assert.That(memberAccess.MemberName, Is.EqualTo("x"));
         Assert.That(memberAccess.Target, Is.InstanceOf<IndexExpressionNode>());
     }
+
+    [Test]
+    public void Parse_ModuleAndImports()
+    {
+        var source = @"
+        module std::math
+        import std::types
+        import core::io
+
+        func add(i32 a, i32 b) -> i32 { return a + b }
+        ";
+        var program = Parse(source);
+
+        Assert.That(program.Module, Is.Not.Null);
+        Assert.That(program.Module.PathSegments, Is.EquivalentTo(new[] { "std", "math" }));
+        Assert.That(program.Imports, Has.Count.EqualTo(2));
+        Assert.That(program.Imports[0].PathSegments, Is.EquivalentTo(new[] { "std", "types" }));
+        Assert.That(program.Imports[1].PathSegments, Is.EquivalentTo(new[] { "core", "io" }));
+        Assert.That(program.Functions, Has.Count.EqualTo(1));
+    }
 }

@@ -13,7 +13,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <None Update="main.lumi">
+        <None Update="*.lumi">
             <CopyToOutputDirectory>Always</CopyToOutputDirectory>
         </None>
     </ItemGroup>

@@ -154,4 +154,48 @@ public class CodegenTests
         var codegen = new Codegen("test_module", typeChecker.SemanticModel);
         codegen.GenerateProgram(program);
     }
+
+    [Fact]
+    public void Codegen_MultiModule_DoesNotCrash()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var mathPath = Path.Combine(tempDir, "math.lumi");
+            File.WriteAllText(mathPath, @"
+module std::math
+struct Point { i32 x i32 y }
+func add(i32 a, i32 b) -> i32 { return a + b }
+");
+
+            var mainPath = Path.Combine(tempDir, "main.lumi");
+            File.WriteAllText(mainPath, @"
+import std::math
+func main() -> void {
+    i32 res = std::math::add(1, 2)
+    std::math::Point p = std::math::Point { x: 1, y: 2 }
+}");
+
+            var diagnostics = new DiagnosticBag();
+            var loader = new ModuleLoader(diagnostics);
+            var modules = loader.Load(mainPath);
+
+            var checker = new TypeChecker(diagnostics);
+            checker.CheckCompilationUnit(modules);
+
+            if (diagnostics.HasErrors)
+            {
+                throw new Exception("Type checking failed: " +
+                                    string.Join(", ", diagnostics.Diagnostics.Select(d => d.Message)));
+            }
+
+            var codegen = new Codegen("test_module", checker.SemanticModel);
+            codegen.GenerateCompilationUnit(modules);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
+    }
 }
