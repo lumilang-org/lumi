@@ -7,6 +7,7 @@ public sealed class ProgramNode(
     IReadOnlyList<ImportDeclarationNode> imports,
     IReadOnlyList<FunctionDeclarationNode> functions,
     IReadOnlyList<StructDeclarationNode> structs,
+    IReadOnlyList<ExternFunctionDeclarationNode> externFunctions,
     SourceSpan span,
     string fileName) : ASTNode(span)
 {
@@ -15,4 +16,5 @@ public sealed class ProgramNode(
     public IReadOnlyList<ImportDeclarationNode> Imports { get; } = imports;
     public IReadOnlyList<FunctionDeclarationNode> Functions { get; } = functions;
     public IReadOnlyList<StructDeclarationNode> Structs { get; } = structs;
+    public IReadOnlyList<ExternFunctionDeclarationNode> ExternFunctions { get; } = externFunctions;
 }

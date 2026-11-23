@@ -1,9 +1,9 @@
 using System.Globalization;
 using System.Numerics;
 using Lumi.Core.Ast;
-using Lumi.Core.Ast.Statements;
 using Lumi.Core.Ast.Declarations;
 using Lumi.Core.Ast.Expressions;
+using Lumi.Core.Ast.Statements;
 using Lumi.Core.Diagnostics;
 using Lumi.Core.Syntax;
 
@@ -14,9 +14,9 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
     private readonly Dictionary<string, string> _moduleContexts = new();
     private readonly ReturnAnalyzer _returnAnalyzer = new();
     private readonly Dictionary<string, StructDeclarationNode> _structs = new();
-    private IReadOnlyList<ImportDeclarationNode> _currentImports = [];
 
     private string _currentFile = "<unknown>";
+    private IReadOnlyList<ImportDeclarationNode> _currentImports = [];
     private string _currentModulePrefix = "";
     private int _loopDepth;
     public SemanticModel SemanticModel { get; } = new();
@@ -57,9 +57,9 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
     public void CheckCompilationUnit(IReadOnlyList<ProgramNode> modules)
     {
         _structs.Clear();
-        Functions.Clear(); // Assuming I add a Clear method to FunctionRegistry or handle it here
+        Functions.Clear();
 
-        // 1. Pass: Register all structs (mangled) across all modules
+        // Register all structs (mangled) across all modules
         foreach (var module in modules)
         {
             var modulePrefix = module.Module != null ? string.Join("::", module.Module.PathSegments) : "";
@@ -78,7 +78,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             }
         }
 
-        // 2. Pass: Register all function signatures (mangled) with resolved types
+        // Register all function signatures (mangled) with resolved types
         foreach (var module in modules)
         {
             var modulePrefix = module.Module != null ? string.Join("::", module.Module.PathSegments) : "";
@@ -103,9 +103,44 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                 SemanticModel.SetType(func, ResolveType(func.ReturnType));
                 SemanticModel.SetMangledName(func, mangledName);
             }
+
+            foreach (var externFunc in module.ExternFunctions)
+            {
+                // Looked up like any function (std::c::abs); codegen links it by its plain C name.
+                var mangledName = MangleName(modulePrefix, externFunc.Name);
+                var paramTypes = externFunc.Parameters
+                    .Select(p =>
+                    {
+                        ValidateType(p.Type, p.Span);
+                        var resolved = ResolveType(p.Type);
+
+                        // Codegen reads parameter types from the semantic model.
+                        SemanticModel.SetType(p, resolved);
+                        return resolved;
+                    })
+                    .ToArray();
+
+                ValidateType(externFunc.ReturnType, externFunc.Span);
+                var resolvedReturn = ResolveType(externFunc.ReturnType);
+
+                var signature = new FunctionSignature(
+                    mangledName,
+                    paramTypes,
+                    resolvedReturn);
+
+                if (!Functions.TryRegister(signature))
+                {
+                    Report(
+                        DiagnosticCodes.DuplicateFunction,
+                        $"Function '{mangledName}' is already declared.",
+                        externFunc.Span);
+                }
+
+                SemanticModel.SetType(externFunc, resolvedReturn);
+                SemanticModel.SetMangledName(externFunc, mangledName);
+            }
         }
 
-        // 3. Pass: Check bodies with cross-module resolution
         foreach (var module in modules)
         {
             var modulePrefix = module.Module != null ? string.Join("::", module.Module.PathSegments) : "";
@@ -135,14 +170,14 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
     private string ResolveSymbolName(string name)
     {
-        // 1. Try local module
+        // Try local module
         var localMangled = MangleName(_currentModulePrefix, name);
         if (Functions.Contains(localMangled) || _structs.ContainsKey(localMangled))
         {
             return localMangled;
         }
 
-        // 2. Try imports
+        // Try imports
         foreach (var import in _currentImports)
         {
             var importPrefix = string.Join("::", import.PathSegments);
@@ -183,7 +218,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             }
         }
 
-        // 3. Fallback to unmangled (for built-ins or main)
+        // Fallback to unmangled (for built-ins or main)
         return name.Replace("::", "_");
     }
 
@@ -747,6 +782,14 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         for (var i = 0; i < functionCall.Arguments.Count; i++)
         {
             var argument = functionCall.Arguments[i];
+
+            // Surplus arguments were already reported above; still check them on their own.
+            if (i >= signature.ParameterTypes.Count)
+            {
+                CheckExpression(argument, scope);
+                continue;
+            }
+
             var expectedType = signature.ParameterTypes[i];
 
             var actualType = CheckExpression(

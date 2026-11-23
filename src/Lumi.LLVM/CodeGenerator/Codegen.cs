@@ -16,16 +16,16 @@ public sealed partial class Codegen
     private readonly Stack<LoopTargets> _loopTargets = new();
     private readonly LLVMModuleRef _module;
     private readonly SemanticModel _semanticModel;
-    private readonly Dictionary<string, StructLayoutInfo> _structLayouts = new();
 
     // Identical string literals share one private constant global per module.
     private readonly Dictionary<string, LLVMValueRef> _stringLiterals = new();
+    private readonly Dictionary<string, StructLayoutInfo> _structLayouts = new();
+    private readonly LLVMTypeRef _usizeType;
 
     // Track the return type of the function currently being generated
     private LLVMTypeRef _currentReturnType;
 
     private string _currentReturnTypeName = TypeConst.Void;
-    private readonly LLVMTypeRef _usizeType;
 
     private VariableScope _currentScope;
 
@@ -61,6 +61,33 @@ public sealed partial class Codegen
         // Declare every function in the LLVM module.
         foreach (var module in modules)
         {
+            foreach (var externFunc in module.ExternFunctions)
+            {
+                // Calls find the function by its module-mangled name; the linker sees the C name.
+                var lookupName = _semanticModel.GetMangledName(externFunc);
+                var symbolName = externFunc.Name;
+                var returnType = ResolveType(_semanticModel.GetType(externFunc));
+
+                var parameterTypes = externFunc.Parameters
+                    .Select(parameter => ResolveType(_semanticModel.GetType(parameter)))
+                    .ToArray();
+
+                var functionType = LLVMTypeRef.CreateFunction(
+                    returnType,
+                    parameterTypes);
+
+                // Adds an external function declaration (no basic blocks / no body). Two modules
+                // may declare the same C function; they share one declaration.
+                var existing = _module.GetNamedFunction(symbolName);
+                var function = existing.Handle != IntPtr.Zero
+                    ? existing
+                    : _module.AddFunction(symbolName, functionType);
+
+                _functions.Add(
+                    lookupName,
+                    (function, functionType));
+            }
+
             foreach (var funcNode in module.Functions)
             {
                 var mangledName = _semanticModel.GetMangledName(funcNode);

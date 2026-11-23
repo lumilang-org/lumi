@@ -1,8 +1,8 @@
 using System.Globalization;
 using Lumi.Core.Ast;
-using Lumi.Core.Ast.Statements;
 using Lumi.Core.Ast.Declarations;
 using Lumi.Core.Ast.Expressions;
+using Lumi.Core.Ast.Statements;
 using Lumi.Core.Diagnostics;
 using Lumi.Core.Semantics;
 
@@ -89,6 +89,57 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         };
     }
 
+    private ExternFunctionDeclarationNode ParseExternFunction()
+    {
+        var externToken = Consume(TokenType.KeywordExtern);
+        Consume(TokenType.KeywordFunc);
+
+        var funcName = Current.Value;
+        Consume(TokenType.Identifier);
+
+        Consume(TokenType.LParen);
+        var parameters = ParseFunctionParameters();
+        Consume(TokenType.RParen);
+
+        Consume(TokenType.Arrow);
+
+        if (Current.Type != TokenType.TypeVoid &&
+            !IsTypeToken(Current.Type) &&
+            Current.Type != TokenType.Identifier &&
+            Current.Type != TokenType.Star)
+        {
+            Report(
+                DiagnosticCodes.ExpectedToken,
+                $"Syntax Error: Expected return type, got {Current.Type} ('{Current.Value}') at position {_position}",
+                Current.Span);
+            throw new ParseException();
+        }
+
+        var returnType = Current.Type == TokenType.TypeVoid ? "void" : ParseTypeName();
+        if (returnType == TypeConst.Void)
+        {
+            Advance();
+        }
+
+        if (Current.Type == TokenType.LBrace)
+        {
+            Report(
+                DiagnosticCodes.UnexpectedToken,
+                $"Syntax Error: Extern function '{funcName}' cannot have a body",
+                Current.Span);
+            throw new ParseException();
+        }
+
+        // The declaration ends with its return type, not with the token that follows it.
+        var span = CreateSpan(externToken.Span.Start, Peek(-1).Span.End);
+
+        return new ExternFunctionDeclarationNode(
+            funcName,
+            parameters,
+            returnType,
+            span);
+    }
+
     private FunctionDeclarationNode ParseFunction()
     {
         var start = Consume(TokenType.KeywordFunc);
@@ -151,6 +202,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         ModuleDeclarationNode? module = null;
         var imports = new List<ImportDeclarationNode>();
         var functions = new List<FunctionDeclarationNode>();
+        var externFunctions = new List<ExternFunctionDeclarationNode>();
         var structs = new List<StructDeclarationNode>();
 
         if (Current.Type == TokenType.KeywordModule)
@@ -172,6 +224,10 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
                 if (Current.Type == TokenType.KeywordStruct)
                 {
                     structs.Add(ParseStructDeclaration());
+                }
+                else if (Current.Type == TokenType.KeywordExtern)
+                {
+                    externFunctions.Add(ParseExternFunction());
                 }
                 else
                 {
@@ -201,7 +257,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
         var span = CreateSpan(startSpan.Start, endSpan.End);
 
-        return new ProgramNode(module, imports, functions, structs, span, fileName);
+        return new ProgramNode(module, imports, functions, structs, externFunctions, span, fileName);
     }
 
     private ModuleDeclarationNode ParseModuleDeclaration()

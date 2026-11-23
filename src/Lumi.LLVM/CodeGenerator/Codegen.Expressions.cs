@@ -2,7 +2,6 @@ using System.Text;
 using LLVMSharp.Interop;
 using Lumi.Core.Ast;
 using Lumi.Core.Ast.Expressions;
-using Lumi.Core.Semantics;
 using Lumi.Core.Syntax;
 using Lumi.LLVM.Structs;
 using Lumi.LLVM.Utils;

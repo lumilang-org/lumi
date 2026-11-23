@@ -5,6 +5,7 @@ public static class TypeConst
     public const string Void = "void";
     public const string Import = "import";
     public const string Module = "module";
+    public const string Extern = "extern";
     public const string I8 = "i8";
     public const string I16 = "i16";
     public const string I32 = "i32";
