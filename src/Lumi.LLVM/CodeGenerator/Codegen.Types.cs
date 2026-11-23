@@ -41,6 +41,11 @@ public sealed partial class Codegen
             return structLayout.StructType;
         }
 
+        if (typeName == TypeConst.Usize)
+        {
+            return _usizeType;
+        }
+
         return typeName switch
         {
             TypeConst.I8 or TypeConst.U8 => _context.Int8Type,

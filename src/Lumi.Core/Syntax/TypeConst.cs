@@ -14,6 +14,7 @@ public static class TypeConst
     public const string U16 = "u16";
     public const string U32 = "u32";
     public const string U64 = "u64";
+    public const string Usize = "usize"; // pointer-sized unsigned integer
     public const string F16 = "f16";
     public const string F32 = "f32";
     public const string F64 = "f64";

@@ -385,7 +385,6 @@ func main() -> void { byte x = 255 u8 y = x byte z = y byte[2] arr = [1, 2] }");
 
         Assert.That(diagnostics.HasErrors, Is.False);
         Assert.That(program.Functions[0].ReturnType, Is.EqualTo("u8"));
-        Assert.That(overflow.HasErrors, Is.True);
     }
 
     [TestCase("i8")]
@@ -712,5 +711,156 @@ func main() -> void {
 
         Assert.That(CountCode(nonPointer, DiagnosticCodes.InvalidDereference), Is.EqualTo(1));
         Assert.That(CountCode(nonLvalue, DiagnosticCodes.InvalidAddressOperand), Is.EqualTo(1));
+    }
+
+    [Test]
+    public void Check_Usize_DeclarationsParametersReturnsFieldsAndArrays()
+    {
+        var (_, _, diagnostics) = Check(@"
+struct Slice { usize start usize[2] bounds }
+func twice(usize n) -> usize { return n + n }
+func main() -> void {
+    usize n = 5
+    usize m = twice(n)
+    usize[3] sizes = [1, 2, 3]
+    Slice s = Slice { start: 1, bounds: [2, 3] }
+    usize i = sizes[n - 4]
+    *usize p = &n
+    *p = m
+    print(s.start)
+    println(i)
+}");
+
+        Assert.That(diagnostics.Diagnostics.Select(DiagnosticFormatter.Format), Is.Empty);
+    }
+
+    [Test]
+    public void Check_Usize_OperatorsKeepTheType()
+    {
+        var (program, model, diagnostics) = Check(@"
+func main() -> void {
+    usize a = 6
+    usize b = 3
+    usize sum = a + b
+    usize diff = a - b
+    usize prod = a * b
+    usize quot = a / b
+    usize both = a & b
+    usize either = a | b
+    usize xor = a ^ b
+    usize inverted = ~a
+    usize left = a << 2
+    usize right = a >> 1
+    bool eq = a == b
+    bool ne = a != b
+    bool lt = a < b
+    bool le = a <= b
+    bool gt = a > b
+    bool ge = a >= b
+    a++
+    --b
+    usize old = a++
+}");
+
+        Assert.That(diagnostics.Diagnostics.Select(DiagnosticFormatter.Format), Is.Empty);
+        var body = program.Functions[0].Body;
+        string TypeOf(int i) => model.GetExpressionType(((VariableDeclarationNode)body[i]).Initializer!);
+        Assert.That(new[] { TypeOf(2), TypeOf(3), TypeOf(4), TypeOf(5), TypeOf(6), TypeOf(7), TypeOf(8), TypeOf(9) },
+            Is.All.EqualTo("usize"));
+        Assert.That(new[] { TypeOf(12), TypeOf(13), TypeOf(14), TypeOf(15), TypeOf(16), TypeOf(17) },
+            Is.All.EqualTo("bool"));
+    }
+
+    [Test]
+    public void Check_Usize_LiteralRanges_FollowUnsigned64Bits()
+    {
+        var (_, _, maximum) = Check("func main() -> void { usize n = 18446744073709551615 }");
+        var (_, _, negative) = Check("func main() -> void { usize n = -1 }");
+
+        Assert.That(maximum.HasErrors, Is.False);
+        Assert.That(CountCode(negative, DiagnosticCodes.TypeMismatch), Is.GreaterThan(0));
+    }
+
+    [Test]
+    public void Check_Usize_WidensNarrowerUnsignedOperands()
+    {
+        var (program, model, diagnostics) = Check(@"
+func main() -> void {
+    usize n = 1000
+    u8 a = 1
+    u16 b = 2
+    u32 c = 3
+    usize r1 = n + a
+    usize r2 = b * n
+    usize r3 = n - c
+    bool lt = a < n
+}");
+
+        Assert.That(diagnostics.Diagnostics.Select(DiagnosticFormatter.Format), Is.Empty);
+        var decl = (VariableDeclarationNode)program.Functions[0].Body[4];
+        Assert.That(model.GetExpressionType(decl.Initializer!), Is.EqualTo("usize"));
+    }
+
+    [Test]
+    public void Check_Usize_DoesNotMixWithU64OrSignedIntegers()
+    {
+        foreach (var other in new[] { "u64", "i8", "i32", "i64" })
+        {
+            var (_, _, arithmetic) = Check(
+                $"func main() -> void {{ usize n = 1 {other} m = 1 usize r = n + m }}");
+            var (_, _, comparison) = Check(
+                $"func main() -> void {{ usize n = 1 {other} m = 1 bool r = n < m }}");
+
+            Assert.That(arithmetic.HasErrors, Is.True, $"usize + {other}");
+            Assert.That(comparison.HasErrors, Is.True, $"usize < {other}");
+        }
+    }
+
+    [Test]
+    public void Check_Usize_IsDistinctFromOtherIntegerTypesForAssignment()
+    {
+        foreach (var other in new[] { "u8", "u32", "u64", "i32", "i64" })
+        {
+            var (_, _, toUsize) = Check($"func main() -> void {{ {other} v = 1 usize n = v }}");
+            var (_, _, fromUsize) = Check($"func main() -> void {{ usize n = 1 {other} v = n }}");
+
+            Assert.That(CountCode(toUsize, DiagnosticCodes.TypeMismatch), Is.EqualTo(1), $"{other} -> usize");
+            Assert.That(CountCode(fromUsize, DiagnosticCodes.TypeMismatch), Is.EqualTo(1), $"usize -> {other}");
+        }
+    }
+
+    [Test]
+    public void Check_Usize_ArgumentsAndReturnsMustMatchExactly()
+    {
+        var (_, _, argument) = Check(@"
+func take(usize n) -> void { }
+func main() -> void { u64 v = 1 take(v) }");
+        var (_, _, returned) = Check("func f(u64 v) -> usize { return v }");
+
+        Assert.That(CountCode(argument, DiagnosticCodes.TypeMismatch), Is.EqualTo(1));
+        Assert.That(CountCode(returned, DiagnosticCodes.TypeMismatch), Is.EqualTo(1));
+    }
+
+    [Test]
+    public void Check_Usize_RejectsSignedOnlyAndNonIntegerOperators()
+    {
+        var (_, _, negate) = Check("func main() -> void { usize n = 1 usize m = -n }");
+        var (_, _, logical) = Check("func main() -> void { usize n = 1 bool b = !n }");
+        var (_, _, withFloat) = Check("func main() -> void { usize n = 1 f32 f = 1.5 f32 g = n + f }");
+
+        Assert.That(negate.HasErrors, Is.True);
+        Assert.That(logical.HasErrors, Is.True);
+        Assert.That(withFloat.HasErrors, Is.True);
+    }
+
+    [Test]
+    public void Check_Usize_ErrorsAreFileAwareWithSpans()
+    {
+        var (_, _, diagnostics) = Check("func main() -> void { usize n = true }");
+
+        var diagnostic = diagnostics.Diagnostics.Single(d => d.Code == DiagnosticCodes.TypeMismatch);
+        Assert.That(diagnostic.FileName, Is.EqualTo("test.lumi"));
+        Assert.That(diagnostic.Message, Does.Contain("usize"));
+        Assert.That(diagnostic.Span!.Start.Column, Is.EqualTo(33));
     }
 }

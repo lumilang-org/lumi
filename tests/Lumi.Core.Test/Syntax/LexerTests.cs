@@ -311,4 +311,27 @@ public class LexerTests
             TokenType.Identifier, TokenType.Star, TokenType.Identifier
         }));
     }
+
+    [Test]
+    public void NextToken_Usize_IsAPrimitiveTypeKeyword()
+    {
+        var token = new Lexer("usize", new DiagnosticBag(), "test.lumi").NextToken();
+
+        Assert.That(token.Type, Is.EqualTo(TokenType.TypeUsize));
+        Assert.That(token.Value, Is.EqualTo("usize"));
+    }
+
+    [TestCase("usizes")]
+    [TestCase("usize2")]
+    [TestCase("my_usize")]
+    [TestCase("Usize")]
+    [TestCase("usiz")]
+    [TestCase("_usize")]
+    public void NextToken_IdentifiersContainingUsize_AreNotKeywords(string name)
+    {
+        var token = new Lexer(name, new DiagnosticBag(), "test.lumi").NextToken();
+
+        Assert.That(token.Type, Is.EqualTo(TokenType.Identifier));
+        Assert.That(token.Value, Is.EqualTo(name));
+    }
 }

@@ -27,6 +27,7 @@ public sealed class Lexer
         { TypeConst.U16, TokenType.TypeU16 },
         { TypeConst.U32, TokenType.TypeU32 },
         { TypeConst.U64, TokenType.TypeU64 },
+        { TypeConst.Usize, TokenType.TypeUsize },
         { TypeConst.Bool, TokenType.TypeBool },
         { TypeConst.Void, TokenType.TypeVoid },
         { TypeConst.F16, TokenType.TypeF16 },

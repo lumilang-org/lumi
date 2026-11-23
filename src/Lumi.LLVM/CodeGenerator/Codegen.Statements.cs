@@ -1,7 +1,7 @@
 using LLVMSharp.Interop;
 using Lumi.Core.Ast;
-using Lumi.Core.Ast.Statements;
 using Lumi.Core.Ast.Expressions;
+using Lumi.Core.Ast.Statements;
 using Lumi.Core.Semantics;
 using Lumi.Core.Syntax;
 using Lumi.LLVM.Utils;
@@ -117,9 +117,11 @@ public sealed partial class Codegen
                     case TypeConst.Char:
                         WriterUtils.EmitPrintChar(printValue, _module, _context, _builder);
                         break;
-                    case "i8" or "i16" or "i32" or "i64"
-                        or "u8" or "u16" or "u32" or "u64":
+                    case "i8" or "i16" or "i32" or "i64":
                         WriterUtils.EmitPrintInt(printValue, _module, _context, _builder);
+                        break;
+                    case TypeConst.U8 or TypeConst.U16 or TypeConst.U32 or TypeConst.U64 or TypeConst.Usize:
+                        WriterUtils.EmitPrintInt(printValue, _module, _context, _builder, true);
                         break;
                     case TypeConst.String:
                         WriterUtils.EmitPrintString(printValue, _module, _context, _builder);

@@ -61,10 +61,11 @@ public static class WriterUtils
         LLVMValueRef valueToPrint,
         LLVMModuleRef module,
         LLVMContextRef context,
-        LLVMBuilderRef builder)
+        LLVMBuilderRef builder,
+        bool isUnsigned = false)
     {
         new IntegerPrintEmitter(module, context, builder)
-            .Emit(valueToPrint);
+            .Emit(valueToPrint, isUnsigned);
     }
 
     internal static void EmitPrintChar(

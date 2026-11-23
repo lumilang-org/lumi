@@ -9,7 +9,8 @@ internal sealed class PrintBuffer
     private readonly LLVMContextRef _context;
     private readonly LLVMBuilderRef _builder;
 
-    public const int Size = 16;
+    // Room for the 20 digits of a 64-bit value plus a sign.
+    public const int Size = 32;
 
     private PrintBuffer(
         LLVMTypeRef arrayType,

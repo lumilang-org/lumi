@@ -6,7 +6,8 @@ namespace Lumi.LLVM.Helpers;
 
 public sealed class LlvmTypeHelper(
     LLVMContextRef context,
-    LLVMBuilderRef builder)
+    LLVMBuilderRef builder,
+    int pointerWidth)
 {
     public LLVMTypeRef GetIntegerType(string typeName)
     {
@@ -23,7 +24,7 @@ public sealed class LlvmTypeHelper(
         };
     }
 
-    private static int GetIntegerWidth(string typeName)
+    private int GetIntegerWidth(string typeName)
     {
         return typeName switch
         {
@@ -31,6 +32,9 @@ public sealed class LlvmTypeHelper(
             TypeConst.I16 or TypeConst.U16 => 16,
             TypeConst.I32 or TypeConst.U32 => 32,
             TypeConst.I64 or TypeConst.U64 => 64,
+
+            // usize is as wide as a pointer on the target.
+            TypeConst.Usize => pointerWidth,
 
             _ => throw new ArgumentException(
                 $"'{typeName}' is not a supported integer type.",

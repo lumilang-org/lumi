@@ -727,6 +727,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             TokenType.TypeU16 or
             TokenType.TypeU32 or
             TokenType.TypeU64 or
+            TokenType.TypeUsize or
             TokenType.TypeF16 or
             TokenType.TypeF32 or
             TokenType.TypeF64 or

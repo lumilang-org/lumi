@@ -13,6 +13,17 @@ public static class TypePromoter
             return null;
         }
 
+        // usize is its own type: it combines with itself and with narrower unsigned types
+        // (which widen to it), but not with u64 or any signed type.
+        if (leftType == TypeConst.Usize || rightType == TypeConst.Usize)
+        {
+            var other = leftType == TypeConst.Usize ? rightType : leftType;
+
+            return other is TypeConst.Usize or TypeConst.U8 or TypeConst.U16 or TypeConst.U32
+                ? TypeConst.Usize
+                : null;
+        }
+
         var leftIsUnsigned = IsUnsignedIntegerType(leftType);
         var rightIsUnsigned = IsUnsignedIntegerType(rightType);
 
@@ -38,7 +49,7 @@ public static class TypePromoter
     {
         return type is
             "i8" or "i16" or "i32" or "i64" or
-            "u8" or "u16" or "u32" or "u64";
+            "u8" or "u16" or "u32" or "u64" or "usize";
     }
 
     private static bool IsUnsignedIntegerType(string type)
@@ -53,7 +64,8 @@ public static class TypePromoter
             TypeConst.I8 or TypeConst.U8 => 8,
             TypeConst.I16 or TypeConst.U16 => 16,
             TypeConst.I32 or TypeConst.U32 => 32,
-            TypeConst.I64 or TypeConst.U64 => 64,
+            // usize is pointer-sized; the checker assumes a 64-bit target.
+            TypeConst.I64 or TypeConst.U64 or TypeConst.Usize => 64,
             _ => throw new ArgumentException(
                 $"'{type}' is not a supported integer type.",
                 nameof(type))

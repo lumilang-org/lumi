@@ -25,6 +25,7 @@ public sealed partial class Codegen
     private LLVMTypeRef _currentReturnType;
 
     private string _currentReturnTypeName = TypeConst.Void;
+    private readonly LLVMTypeRef _usizeType;
 
     private VariableScope _currentScope;
 
@@ -34,12 +35,15 @@ public sealed partial class Codegen
         _module = _context.CreateModuleWithName(moduleName);
         _builder = _context.CreateBuilder();
         _semanticModel = semanticModel;
-        _llvmTypeHelper = new LlvmTypeHelper(_context, _builder);
         _currentScope = new VariableScope();
 
         LLVMSharp.Interop.LLVM.InitializeNativeTarget();
         LLVMSharp.Interop.LLVM.InitializeNativeAsmPrinter();
         LLVMSharp.Interop.LLVM.InitializeNativeAsmParser();
+
+        // usize is as wide as a pointer on the target the module is compiled for.
+        _usizeType = _context.GetIntPtrType(CreateTargetMachine().CreateTargetDataLayout());
+        _llvmTypeHelper = new LlvmTypeHelper(_context, _builder, (int)_usizeType.IntWidth);
     }
 
     public void GenerateProgram(ProgramNode program)
@@ -151,6 +155,21 @@ public sealed partial class Codegen
         }
     }
 
+    private static LLVMTargetMachineRef CreateTargetMachine()
+    {
+        var targetTriple = LLVMTargetRef.DefaultTriple;
+        var target = LLVMTargetRef.GetTargetFromTriple(targetTriple);
+
+        return target.CreateTargetMachine(
+            targetTriple,
+            "generic",
+            "",
+            LLVMCodeGenOptLevel.LLVMCodeGenLevelDefault,
+            LLVMRelocMode.LLVMRelocDefault,
+            LLVMCodeModel.LLVMCodeModelDefault
+        );
+    }
+
     public string GetModuleIr()
     {
         return _module.PrintToString();
@@ -163,19 +182,8 @@ public sealed partial class Codegen
 
     public void CompileToNativeObject(string outputFileName)
     {
-        var targetTriple = LLVMTargetRef.DefaultTriple;
-        _module.Target = targetTriple;
-
-        var target = LLVMTargetRef.GetTargetFromTriple(targetTriple);
-
-        var targetMachine = target.CreateTargetMachine(
-            targetTriple,
-            "generic",
-            "",
-            LLVMCodeGenOptLevel.LLVMCodeGenLevelDefault,
-            LLVMRelocMode.LLVMRelocDefault,
-            LLVMCodeModel.LLVMCodeModelDefault
-        );
+        var targetMachine = CreateTargetMachine();
+        _module.Target = LLVMTargetRef.DefaultTriple;
 
         // Retrieve the proper Data Layout string representation from the target machine
         var dataLayout = targetMachine.CreateTargetDataLayout();

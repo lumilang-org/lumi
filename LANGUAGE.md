@@ -19,6 +19,7 @@ Lumi is a statically typed systems programming language designed around explicit
 | Type Name | Category | Description / Size |
 | :--- | :--- | :--- |
 | `byte` | Unsigned Integer | Alias of `u8` |
+| `usize` | Unsigned Integer | Pointer-sized unsigned integer: as wide as a pointer on the target (64 bits on 64-bit targets), used for sizes and indices |
 | `i8`, `i16`, `i32`, `i64` | Signed Integer | Fixed-width 2's complement integers (8 to 64 bits) |
 | `u8`, `u16`, `u32`, `u64` | Unsigned Integer | Fixed-width unsigned integers (8 to 64 bits) |
 | `f16`, `f32`, `f64` | Floating Point | IEEE 754 half, single, and double precision floats |
@@ -26,6 +27,8 @@ Lumi is a statically typed systems programming language designed around explicit
 | `char` | Character | 8-bit character literal (e.g., `'a'`, `'\n'`), see 2.2 |
 | `string` | String | Immutable text literal (e.g., `"hello"`), see 2.2 |
 | `void` | Void | Indicates a function returns no value |
+
+`usize` is a distinct type with the same unsigned semantics as `u64`: it is zero-extended, compared with unsigned predicates (`<`, `<=`, `>`, `>=`), divided with unsigned division and shifted right logically, and wraps on overflow (`usize max = zero - 1`). It supports every integer operator, `++`/`--`, indexing, pointers (`*usize`), struct fields and arrays (`usize[N]`). Like the other integer types it must match exactly in assignments, arguments and returns, and it never takes a sign (`-n` and `usize x = -1` are errors). In arithmetic and comparisons it combines with `usize` and with the narrower unsigned types `u8`, `u16`, `u32` (which widen to `usize`), but not with `u64` or any signed type; convert with an explicit value of the right type instead. Compile-time range checks and the operator rules assume a 64-bit `usize`.
 
 ### 2.2 Characters and Strings
 
@@ -256,7 +259,7 @@ Lumi includes built-in output functions for development:
 * `print(expr)`: Prints the value of `expr` without a trailing newline.
 * `println(expr)`: Prints the value of `expr` followed by a system newline.
 
-`expr` may be an integer, float, `bool`, `char` or `string`. A pointer (`*T`, any pointee) prints its address as `0x` followed by lowercase hex digits (for example `0x16fdff2ac`); the pointee is not read. The value differs from run to run.
+Unsigned integers (`u8`..`u64`, `usize`) print as unsigned values. `expr` may be an integer, float, `bool`, `char` or `string`. A pointer (`*T`, any pointee) prints its address as `0x` followed by lowercase hex digits (for example `0x16fdff2ac`); the pointee is not read. The value differs from run to run.
 
 ---
 

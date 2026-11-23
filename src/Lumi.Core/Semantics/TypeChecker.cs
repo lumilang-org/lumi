@@ -1134,7 +1134,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             TypeConst.I8 or TypeConst.U8 => 8,
             TypeConst.I16 or TypeConst.U16 => 16,
             TypeConst.I32 or TypeConst.U32 => 32,
-            TypeConst.I64 or TypeConst.U64 => 64,
+            TypeConst.I64 or TypeConst.U64 or TypeConst.Usize => 64,
 
             _ => throw new Exception(
                 $"Cannot determine integer bit width for type '{type}'.")
@@ -1574,7 +1574,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             "u8" => unsignedValue <= byte.MaxValue,
             "u16" => unsignedValue <= ushort.MaxValue,
             "u32" => unsignedValue <= uint.MaxValue,
-            "u64" => true,
+            "u64" or "usize" => true,
 
             "i8" => unsignedValue <= (ulong)sbyte.MaxValue,
             "i16" => unsignedValue <= (ulong)short.MaxValue,

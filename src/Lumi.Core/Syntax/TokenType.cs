@@ -27,6 +27,7 @@ public enum TokenType
     TypeU16,
     TypeU32,
     TypeU64,
+    TypeUsize,
 
     TypeF16,
     TypeF32,

@@ -16,6 +16,6 @@ public sealed class VariableSymbol(
 
     public bool IsUnsignedIntegerType()
     {
-        return TypeName is TypeConst.U8 or TypeConst.U16 or TypeConst.U32 or TypeConst.U64;
+        return TypeName is TypeConst.U8 or TypeConst.U16 or TypeConst.U32 or TypeConst.U64 or TypeConst.Usize;
     }
 }

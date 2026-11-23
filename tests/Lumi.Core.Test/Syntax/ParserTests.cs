@@ -433,4 +433,49 @@ func f(i32 x) -> void {
     {
         Assert.Throws<Exception>(() => Parse("func f(*void p) -> void { }"));
     }
+
+    [Test]
+    public void Parse_Usize_InEveryTypePosition()
+    {
+        var program = Parse(@"
+struct Slice { usize start usize[2] bounds *usize cursor }
+func length(usize a, *usize b) -> usize { return a }
+func main() -> void {
+    usize n = 1
+    usize[3] sizes = [1, 2, 3]
+    *usize p = &n
+    for usize i = 0; i < 3; i++ { }
+}");
+
+        Assert.That(program.Structs[0].Fields.Select(f => f.Type),
+            Is.EqualTo(new[] { "usize", "usize[2]", "*usize" }));
+        Assert.That(program.Functions[0].Parameters.Select(p => p.Type), Is.EqualTo(new[] { "usize", "*usize" }));
+        Assert.That(program.Functions[0].ReturnType, Is.EqualTo("usize"));
+
+        var body = program.Functions[1].Body;
+        Assert.That(((VariableDeclarationNode)body[0]).Type, Is.EqualTo("usize"));
+        Assert.That(((VariableDeclarationNode)body[1]).Type, Is.EqualTo("usize[3]"));
+        Assert.That(((VariableDeclarationNode)body[2]).Type, Is.EqualTo("*usize"));
+        var init = (VariableDeclarationNode)((ForStatementNode)body[3]).Initializer!;
+        Assert.That(init.Type, Is.EqualTo("usize"));
+    }
+
+    [Test]
+    public void Parse_Usize_DeclarationSpanCoversTypeAndInitializer()
+    {
+        var program = Parse("func main() -> void { usize n = 10 }");
+
+        var decl = (VariableDeclarationNode)program.Functions[0].Body[0];
+        Assert.That(decl.Span.Start.Column, Is.EqualTo(23));
+        Assert.That(decl.Initializer!.Span.Start.Column, Is.EqualTo(33));
+    }
+
+    [Test]
+    public void Parse_Usize_InPrintAndExpressions()
+    {
+        var program = Parse("func main() -> void { usize n = 1 print(n) println(n + 1) }");
+
+        Assert.That(program.Functions[0].Body[1], Is.InstanceOf<PrintStatementNode>());
+        Assert.That(((PrintStatementNode)program.Functions[0].Body[2]).AppendNewLine, Is.True);
+    }
 }

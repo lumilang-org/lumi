@@ -10,7 +10,7 @@ internal sealed class IntegerPrintEmitter(
 {
     private const int StdoutFileDescriptor = 1;
 
-    public void Emit(LLVMValueRef value)
+    public void Emit(LLVMValueRef value, bool isUnsigned = false)
     {
         var i8 = context.Int8Type;
         var i32 = context.Int32Type;
@@ -41,11 +41,14 @@ internal sealed class IntegerPrintEmitter(
 
         builder.BuildStore(lastDigitPointer, pointerSlot);
 
-        var isNegative = builder.BuildICmp(
-            LLVMIntPredicate.LLVMIntSLT,
-            normalized,
-            zero,
-            "itoa_is_negative");
+        // Unsigned values never get a sign: all of their bits are magnitude.
+        var isNegative = isUnsigned
+            ? LLVMValueRef.CreateConstInt(context.Int1Type, 0)
+            : builder.BuildICmp(
+                LLVMIntPredicate.LLVMIntSLT,
+                normalized,
+                zero,
+                "itoa_is_negative");
 
         // Negation wraps for the minimum signed integer.
         // The resulting bit pattern is handled using unsigned division.
