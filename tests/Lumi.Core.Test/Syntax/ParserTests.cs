@@ -12,7 +12,8 @@ public class ParserTests
 {
     private ProgramNode Parse(string source)
     {
-        var lexer = new Lexer(source);
+        var diagnostics = new DiagnosticBag();
+        var lexer = new Lexer(source, diagnostics, "test.lumi");
         var tokens = new List<Token>();
         Token token;
         do
@@ -21,7 +22,6 @@ public class ParserTests
             tokens.Add(token);
         } while (token.Type != TokenType.EndOfFile);
 
-        var diagnostics = new DiagnosticBag();
         var parser = new Parser(tokens, diagnostics, "test.lumi");
         var program = parser.ParseProgram();
 
@@ -112,5 +112,51 @@ public class ParserTests
         Assert.That(program.Imports[0].PathSegments, Is.EquivalentTo(new[] { "std", "types" }));
         Assert.That(program.Imports[1].PathSegments, Is.EquivalentTo(new[] { "core", "io" }));
         Assert.That(program.Functions, Has.Count.EqualTo(1));
+    }
+
+    [Test]
+    public void Parse_StringLiteral_ProducesStringLiteralNode()
+    {
+        var program = Parse("func main() -> void { string s = \"hi\\n\" }");
+
+        var varDecl = (VariableDeclarationNode)program.Functions[0].Body[0];
+        Assert.That(varDecl.Type, Is.EqualTo("string"));
+        var literal = varDecl.Initializer as StringLiteralNode;
+        Assert.That(literal, Is.Not.Null);
+        Assert.That(literal.Value, Is.EqualTo("hi\n"));
+        Assert.That(literal.Span.Start.Column, Is.EqualTo(34));
+    }
+
+    [Test]
+    public void Parse_StringType_InParametersReturnsFieldsAndArrays()
+    {
+        var program = Parse(@"
+struct Person { string name }
+func greet(string who) -> string { return who }
+func main() -> void { string[2] names = [""a"", ""b""] }");
+
+        Assert.That(program.Structs[0].Fields[0].Type, Is.EqualTo("string"));
+        Assert.That(program.Functions[0].Parameters[0].Type, Is.EqualTo("string"));
+        Assert.That(program.Functions[0].ReturnType, Is.EqualTo("string"));
+        var names = (VariableDeclarationNode)program.Functions[1].Body[0];
+        Assert.That(names.Type, Is.EqualTo("string[2]"));
+        Assert.That(names.Initializer, Is.InstanceOf<ArrayLiteralNode>());
+    }
+
+    [Test]
+    public void Parse_StringType_InForInitializer()
+    {
+        var program = Parse("func main() -> void { for string s = \"x\"; true; s = \"y\" { } }");
+
+        var forStmt = (ForStatementNode)program.Functions[0].Body[0];
+        Assert.That(forStmt.Initializer, Is.InstanceOf<VariableDeclarationNode>());
+    }
+
+    [Test]
+    public void Parse_ModuleNamedString_IsAccepted()
+    {
+        var program = Parse("module std::string");
+
+        Assert.That(program.Module!.PathSegments, Is.EqualTo(new[] { "std", "string" }));
     }
 }

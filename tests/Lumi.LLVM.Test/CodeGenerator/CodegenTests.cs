@@ -9,7 +9,8 @@ public class CodegenTests
 {
     private string GenerateIR(string source)
     {
-        var lexer = new Lexer(source);
+        var diagnostics = new DiagnosticBag();
+        var lexer = new Lexer(source, diagnostics, "test.lumi");
         var tokens = new List<Token>();
         Token token;
         do
@@ -18,7 +19,6 @@ public class CodegenTests
             tokens.Add(token);
         } while (token.Type != TokenType.EndOfFile);
 
-        var diagnostics = new DiagnosticBag();
         var parser = new Parser(tokens, diagnostics, "test.lumi");
         var program = parser.ParseProgram();
 
@@ -36,8 +36,6 @@ public class CodegenTests
 
         // We can't easily get the IR as a string without a bit more work,
         // but we can verify it doesn't crash and we can potentially use VerifyModule.
-        // For the sake of this task, let's see if we can get the module's IR string.
-        // In LLVMSharp, this is often module.PrintToString()
         return ""; // Placeholder
     }
 
@@ -45,7 +43,8 @@ public class CodegenTests
     public void Codegen_BasicProgram_DoesNotCrash()
     {
         var source = "func main() -> void { i32 x = 10 }";
-        var lexer = new Lexer(source);
+        var diagnostics = new DiagnosticBag();
+        var lexer = new Lexer(source, diagnostics, "test.lumi");
         var tokens = new List<Token>();
         Token token;
         do
@@ -54,7 +53,6 @@ public class CodegenTests
             tokens.Add(token);
         } while (token.Type != TokenType.EndOfFile);
 
-        var diagnostics = new DiagnosticBag();
         var parser = new Parser(tokens, diagnostics, "test.lumi");
         var program = parser.ParseProgram();
         var typeChecker = new TypeChecker(diagnostics);
@@ -75,7 +73,8 @@ public class CodegenTests
             Point[2] points = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]
             points[0].x = 10
         }";
-        var lexer = new Lexer(source);
+        var diagnostics = new DiagnosticBag();
+        var lexer = new Lexer(source, diagnostics, "test.lumi");
         var tokens = new List<Token>();
         Token token;
         do
@@ -84,7 +83,6 @@ public class CodegenTests
             tokens.Add(token);
         } while (token.Type != TokenType.EndOfFile);
 
-        var diagnostics = new DiagnosticBag();
         var parser = new Parser(tokens, diagnostics, "test.lumi");
         var program = parser.ParseProgram();
         var typeChecker = new TypeChecker(diagnostics);
@@ -107,7 +105,8 @@ public class CodegenTests
             i32[2] a = [10, 20]
             Vec2 result = process(v, a)
         }";
-        var lexer = new Lexer(source);
+        var diagnostics = new DiagnosticBag();
+        var lexer = new Lexer(source, diagnostics, "test.lumi");
         var tokens = new List<Token>();
         Token token;
         do
@@ -116,7 +115,6 @@ public class CodegenTests
             tokens.Add(token);
         } while (token.Type != TokenType.EndOfFile);
 
-        var diagnostics = new DiagnosticBag();
         var parser = new Parser(tokens, diagnostics, "test.lumi");
         var program = parser.ParseProgram();
         var typeChecker = new TypeChecker(diagnostics);
@@ -136,7 +134,8 @@ public class CodegenTests
             i32 x = getX(Vec2 { x: 10, y: 20 })
         }";
 
-        var lexer = new Lexer(source);
+        var diagnostics = new DiagnosticBag();
+        var lexer = new Lexer(source, diagnostics, "test.lumi");
         var tokens = new List<Token>();
         Token token;
         do
@@ -145,7 +144,6 @@ public class CodegenTests
             tokens.Add(token);
         } while (token.Type != TokenType.EndOfFile);
 
-        var diagnostics = new DiagnosticBag();
         var parser = new Parser(tokens, diagnostics, "test.lumi");
         var program = parser.ParseProgram();
         var typeChecker = new TypeChecker(diagnostics);

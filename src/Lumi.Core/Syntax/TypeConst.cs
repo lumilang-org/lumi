@@ -20,6 +20,7 @@ public static class TypeConst
     public const string True = "true";
     public const string False = "false";
     public const string Char = "char";
+    public const string String = "string";
     public const string Plus = "+";
     public const string Minus = "-";
     public const string Star = "*";

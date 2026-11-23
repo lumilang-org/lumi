@@ -49,7 +49,7 @@ public sealed class ModuleLoader(DiagnosticBag diagnostics)
             return;
         }
 
-        var lexer = new Lexer(source);
+        var lexer = new Lexer(source, diagnostics, filePath);
         var tokens = lexer.Tokenize();
         var parser = new Parser(tokens, diagnostics, filePath);
         var program = parser.ParseProgram();
@@ -80,11 +80,15 @@ public sealed class ModuleLoader(DiagnosticBag diagnostics)
             return absolutePath;
         }
 
-        // Try searching in subdirectories if it's a multi-segment path
-        // e.g. std::math -> std/math.lumi
-        if (import.PathSegments.Count > 1)
+        // The standard library ships next to the compiler (copied to <OutDir>/std),
+        // so std::string resolves regardless of the working directory.
+        if (import.PathSegments[0] == "std")
         {
-            // Already handled by Path.Combine(import.PathSegments.ToArray())
+            var stdPath = Path.Combine(AppContext.BaseDirectory, relativePath);
+            if (File.Exists(stdPath))
+            {
+                return stdPath;
+            }
         }
 
         // Try looking at the filename itself in the same directory

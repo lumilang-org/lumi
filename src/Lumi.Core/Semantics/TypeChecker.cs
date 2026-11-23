@@ -430,6 +430,14 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                     case IndexExpressionNode indexExpr:
                         targetType = CheckIndexExpression(indexExpr, scope);
                         SemanticModel.SetExpressionType(indexExpr, targetType);
+
+                        if (SemanticModel.GetExpressionType(indexExpr.Target) == TypeConst.String)
+                        {
+                            Report(DiagnosticCodes.TypeMismatch,
+                                "Strings are immutable; a string element cannot be assigned.",
+                                targetAssignment.Target.Span);
+                        }
+
                         break;
 
                     default:
@@ -545,6 +553,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                 CheckUnaryExpression(unary, scope),
 
             LiteralNode<char> _ => TypeConst.Char,
+            StringLiteralNode _ => TypeConst.String,
             LiteralNode<bool> _ => TypeConst.Bool,
             ArrayLiteralNode arrayLiteral => CheckArrayLiteral(arrayLiteral, scope, expectedType),
             IndexExpressionNode indexExpression => CheckIndexExpression(indexExpression, scope),
@@ -688,6 +697,11 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         var resolvedName = ResolveSymbolName(functionCall.Name);
         if (!Functions.TryGet(resolvedName, out var signature))
         {
+            if (functionCall.Name == BuiltinFunctions.Len)
+            {
+                return CheckLenCall(functionCall, scope);
+            }
+
             Report(DiagnosticCodes.UndefinedFunction,
                 $"Function '{functionCall.Name}' is not declared.",
                 functionCall.Span);
@@ -739,6 +753,36 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         }
 
         return signature.ReturnType;
+    }
+
+    // len(string) -> i32. A user-declared 'len' takes precedence over this builtin.
+    private string CheckLenCall(FunctionCallExpressionNode call, SymbolTable scope)
+    {
+        SemanticModel.MarkBuiltinCall(call);
+
+        if (call.Arguments.Count != 1)
+        {
+            foreach (var argument in call.Arguments)
+            {
+                CheckExpression(argument, scope);
+            }
+
+            Report(DiagnosticCodes.ArgumentCountMismatch,
+                $"Function 'len' expects 1 argument, but received {call.Arguments.Count}.",
+                call.Span);
+            return TypeConst.I32;
+        }
+
+        var argumentType = CheckExpression(call.Arguments[0], scope);
+
+        if (argumentType != TypeConst.String && argumentType != TypeConst.Error)
+        {
+            Report(DiagnosticCodes.TypeMismatch,
+                $"Type Mismatch: Argument 1 of function 'len' expects 'string', but got '{argumentType}'.",
+                call.Span);
+        }
+
+        return TypeConst.I32;
     }
 
     private void EnsureValueExpression(
@@ -1104,6 +1148,11 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             return TypeConst.Bool;
         }
 
+        if (leftType == TypeConst.String && isEquality)
+        {
+            return TypeConst.Bool;
+        }
+
         if (leftType == TypeConst.Char || leftType == TypeConst.Bool)
         {
             Report(DiagnosticCodes.TypeMismatch,
@@ -1211,6 +1260,22 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             return TypeConst.Error;
         }
 
+        if (targetType == TypeConst.String)
+        {
+            if (!TypePromoter.IsIntegerType(indexType))
+            {
+                Report(DiagnosticCodes.TypeMismatch, $"String index must be an integer, but got '{indexType}'.",
+                    indexExpr.Index.Span);
+            }
+            else if (TryGetIntegerConstant(indexExpr.Index, out var stringIndex) && stringIndex < 0)
+            {
+                Report(DiagnosticCodes.IndexOutOfBounds,
+                    $"String index '{stringIndex}' is out of bounds.", indexExpr.Index.Span);
+            }
+
+            return TypeConst.Char;
+        }
+
         if (!IsArrayType(targetType))
         {
             Report(DiagnosticCodes.TypeMismatch, $"Cannot index into non-array type '{targetType}'.",
@@ -1270,6 +1335,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             IsFloatingPointType(type) ||
             type == TypeConst.Bool ||
             type == TypeConst.Char ||
+            type == TypeConst.String ||
             type == TypeConst.Void)
         {
             return;
@@ -1296,6 +1362,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             IsFloatingPointType(type) ||
             type == TypeConst.Bool ||
             type == TypeConst.Char ||
+            type == TypeConst.String ||
             type == TypeConst.Void ||
             type == TypeConst.Error)
         {

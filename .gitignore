@@ -9,6 +9,7 @@
 
 #lumi files for now
 *.lumi
+!std/**/*.lumi
 
 # User-specific files
 *.rsuser

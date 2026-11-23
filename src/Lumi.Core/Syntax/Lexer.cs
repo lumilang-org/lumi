@@ -1,3 +1,4 @@
+using System.Text;
 using Lumi.Core.Diagnostics;
 
 namespace Lumi.Core.Syntax;
@@ -36,15 +37,19 @@ public sealed class Lexer
         { TypeConst.Else, TokenType.KeywordElse }
     };
 
+    private readonly DiagnosticBag _diagnostics;
+    private readonly string _fileName;
     private readonly string _source;
     private int _column = 1;
     private char _currentChar = '\0';
     private int _line = 1;
     private int _position;
 
-    public Lexer(string source)
+    public Lexer(string source, DiagnosticBag diagnostics, string fileName)
     {
         _source = source;
+        _diagnostics = diagnostics;
+        _fileName = fileName;
         if (_source.Length > 0)
         {
             _currentChar = _source[0];
@@ -358,6 +363,9 @@ public sealed class Lexer
             case '\'':
                 return ReadCharacterLiteral();
 
+            case '"':
+                return ReadStringLiteral();
+
             default:
                 Advance();
                 return CreateToken(TokenType.Unknown, op.ToString(), start);
@@ -367,38 +375,163 @@ public sealed class Lexer
     private Token ReadCharacterLiteral()
     {
         var start = new SourceLocation(_line, _column);
+        var value = '\0';
 
-        Advance();
+        Advance(); // opening quote
 
-        if (IsAtEnd())
+        if (IsAtEndOfLine())
         {
-            throw new Exception("Lexer Error: Unterminated character literal.");
+            ReportAt(DiagnosticCodes.UnterminatedCharacter,
+                "Syntax Error: Unterminated character literal.", start);
+            return CreateToken(TokenType.Character, value.ToString(), start);
         }
 
-        var value = _currentChar;
-
-        if (value == '\'')
+        if (_currentChar == '\'')
         {
-            throw new Exception("Lexer Error: Empty character literal.");
+            Advance();
+            ReportAt(DiagnosticCodes.EmptyCharacter,
+                "Syntax Error: Empty character literal.", start);
+            return CreateToken(TokenType.Character, value.ToString(), start);
         }
 
-        if (value == '\\')
+        if (_currentChar == '\\')
         {
-            throw new NotSupportedException(
-                "Escape sequences in character literals are not supported yet.");
+            if (TryReadEscape(out var escaped) == EscapeResult.EndOfLine)
+            {
+                ReportAt(DiagnosticCodes.UnterminatedCharacter,
+                    "Syntax Error: Unterminated character literal.", start);
+                return CreateToken(TokenType.Character, value.ToString(), start);
+            }
+
+            value = escaped;
+        }
+        else
+        {
+            value = _currentChar;
+            Advance();
         }
 
-        Advance();
-
-        if (IsAtEnd() || _currentChar != '\'')
+        if (_currentChar == '\'')
         {
-            throw new Exception(
-                "Lexer Error: Character literals must contain exactly one character.");
+            Advance();
+            return CreateToken(TokenType.Character, value.ToString(), start);
         }
 
-        Advance();
+        // More than one character: skip to the closing quote so the parser can continue.
+        while (!IsAtEndOfLine() && _currentChar != '\'')
+        {
+            Advance();
+        }
+
+        if (_currentChar == '\'')
+        {
+            Advance();
+            ReportAt(DiagnosticCodes.MultiCharacter,
+                "Syntax Error: Character literals must contain exactly one character.", start);
+        }
+        else
+        {
+            ReportAt(DiagnosticCodes.UnterminatedCharacter,
+                "Syntax Error: Unterminated character literal.", start);
+        }
 
         return CreateToken(TokenType.Character, value.ToString(), start);
+    }
+
+    private enum EscapeResult
+    {
+        Valid,
+        Invalid,
+        EndOfLine
+    }
+
+    // The current character must be the backslash. Consumes the whole escape sequence.
+    private EscapeResult TryReadEscape(out char value)
+    {
+        var escapeStart = new SourceLocation(_line, _column);
+        value = '\0';
+
+        Advance(); // backslash
+
+        if (IsAtEndOfLine())
+        {
+            return EscapeResult.EndOfLine;
+        }
+
+        var escaped = _currentChar;
+        Advance();
+
+        switch (escaped)
+        {
+            case 'n': value = '\n'; return EscapeResult.Valid;
+            case 'r': value = '\r'; return EscapeResult.Valid;
+            case 't': value = '\t'; return EscapeResult.Valid;
+            case '\\': value = '\\'; return EscapeResult.Valid;
+            case '\'': value = '\''; return EscapeResult.Valid;
+            case '"': value = '"'; return EscapeResult.Valid;
+            case '0': value = '\0'; return EscapeResult.Valid;
+            default:
+                _diagnostics.Report(
+                    _fileName,
+                    DiagnosticCodes.InvalidEscapeSequence,
+                    $"Syntax Error: Invalid escape sequence '\\{escaped}'.",
+                    new SourceSpan(escapeStart, new SourceLocation(_line, _column)));
+                return EscapeResult.Invalid;
+        }
+    }
+
+    private bool IsAtEndOfLine()
+    {
+        return IsAtEnd() || _currentChar is '\n' or '\r';
+    }
+
+    private void ReportAt(string code, string message, SourceLocation start)
+    {
+        _diagnostics.Report(
+            _fileName,
+            code,
+            message,
+            new SourceSpan(start, new SourceLocation(_line, _column)));
+    }
+
+    private Token ReadStringLiteral()
+    {
+        var start = new SourceLocation(_line, _column);
+        var value = new StringBuilder();
+
+        Advance(); // opening quote
+
+        while (true)
+        {
+            if (IsAtEndOfLine())
+            {
+                ReportAt(DiagnosticCodes.UnterminatedString,
+                    "Syntax Error: Unterminated string literal.", start);
+                break;
+            }
+
+            if (_currentChar == '"')
+            {
+                Advance();
+                break;
+            }
+
+            if (_currentChar != '\\')
+            {
+                value.Append(_currentChar);
+                Advance();
+                continue;
+            }
+
+            // An invalid escape is reported and dropped; an escape cut short by the end
+            // of the line is reported as unterminated by the next iteration.
+            if (TryReadEscape(out var escaped) == EscapeResult.Valid)
+            {
+                value.Append(escaped);
+            }
+        }
+
+        return CreateToken(TokenType.String, value.ToString(), start);
     }
 
     private bool IsAtEnd()

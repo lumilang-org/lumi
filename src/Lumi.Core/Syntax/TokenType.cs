@@ -36,6 +36,7 @@ public enum TokenType
     Identifier,
     Number,
     Character, // Char literal
+    String, // String literal (value holds the unescaped text)
     BooleanLiteral,
 
     Assign,

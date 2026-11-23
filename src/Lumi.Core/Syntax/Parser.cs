@@ -583,7 +583,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
         if (Current.Type != TokenType.Semicolon)
         {
-            initializer = IsTypeToken(Current.Type)
+            initializer = IsVariableDeclaration()
                 ? ParseVariableDeclaration()
                 : ParseAssignmentStatement();
         }
@@ -794,6 +794,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
                 return ParseIdentifier();
             case TokenType.Character:
                 return ParseCharLiteral();
+            case TokenType.String:
+                return ParseStringLiteral();
             case TokenType.BooleanLiteral:
                 return ParseBooleanLiteral();
             case TokenType.LParen:
@@ -858,6 +860,14 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         return new LiteralNode<char>(
             token.Value[0],
             token.Span);
+    }
+
+    private ExpressionNode ParseStringLiteral()
+    {
+        var token = Current;
+        Advance();
+
+        return new StringLiteralNode(token.Value, token.Span);
     }
 
     private ExpressionNode ParseUnaryExpression()

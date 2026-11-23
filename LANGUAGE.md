@@ -22,10 +22,38 @@ Lumi is a statically typed systems programming language designed around explicit
 | `u8`, `u16`, `u32`, `u64` | Unsigned Integer | Fixed-width unsigned integers (8 to 64 bits) |
 | `f16`, `f32`, `f64` | Floating Point | IEEE 754 half, single, and double precision floats |
 | `bool` | Boolean | `true` or `false` (1-bit integer in LLVM) |
-| `char` | Character | 8-bit ASCII character literal (e.g., `'a'`) |
+| `char` | Character | 8-bit character literal (e.g., `'a'`, `'\n'`), see 2.2 |
+| `string` | String | Immutable text literal (e.g., `"hello"`), see 2.2 |
 | `void` | Void | Indicates a function returns no value |
 
-### 2.2 Aggregate Types (`struct`)
+### 2.2 Characters and Strings
+
+A character literal is a single character in single quotes and has type `char` (one byte). A string literal is written in double quotes and has type `string`. Both support the escape sequences `\n`, `\r`, `\t`, `\\`, `\'`, `\"` and `\0`. Literals cannot span lines. Empty (`''`) or multi-character (`'ab'`) character literals, unterminated literals and unknown escapes are compile errors.
+
+```text
+char newline = '\n'
+string greeting = "Hello\n"
+string[2] names = ["Ada", "Grace"]
+```
+
+A `string` can be used anywhere a type is accepted: variables, parameters, return types, struct fields and arrays (`string[3]`). It is a pointer to immutable, NUL-terminated UTF-8 bytes (so `\0` ends the text for `print`, `println`, `len` and `==`).
+
+| Operation | Result | Notes |
+| :--- | :---: | :--- |
+| `s[i]` | `char` | Byte at index `i` (any integer type). Not bounds-checked at run time; a constant negative index is a compile error. Strings are immutable, so `s[i] = c` is rejected. |
+| `len(s)` | `i32` | Number of bytes before the terminating NUL. A user-declared function named `len` takes precedence. |
+| `a == b`, `a != b` | `bool` | Compares contents (not addresses). `<`, `<=`, `>`, `>=`, `+` and other operators are rejected. |
+| `c == 'a'`, `c != 'a'` | `bool` | `char` supports equality only. |
+
+```text
+string s = "banana"
+u32 n = 0
+for i32 i = 0; i < len(s); i = i + 1 {
+    if (s[i] == 'a') { n = n + 1 }
+}
+```
+
+### 2.3 Aggregate Types (`struct`)
 
 Structs group named fields into stack-allocated data structures. Struct declarations occur at the top level of a file.
 
@@ -185,9 +213,36 @@ Lumi includes built-in output functions for development:
 * `print(expr)`: Prints the value of `expr` without a trailing newline.
 * `println(expr)`: Prints the value of `expr` followed by a system newline.
 
+`expr` may be an integer, float, `bool`, `char` or `string`.
+
 ---
 
-## 9. Execution Model & v0.1 Limitations
+## 9. Standard Library
+
+Standard modules live in the `std/` folder, which is copied next to the compiler, so `import std::string` works from any directory. `std::string` provides non-allocating helpers:
+
+| Function | Description |
+| :--- | :--- |
+| `empty() -> string`, `newline() -> string` | The strings `""` and `"\n"` |
+| `identity(string value) -> string` | Returns `value` |
+| `print_line(string value) -> void` | Prints `value` and a newline |
+| `is_empty(string s) -> bool` | `len(s) == 0` |
+| `equals(string a, string b) -> bool` | `a == b` |
+| `count_char(string s, char target) -> i32` | Number of occurrences of `target` |
+| `index_of(string s, char target) -> i32` | Index of the first `target`, or `-1` |
+| `starts_with_char(string s, char ch) -> bool` | `s` is non-empty and `s[0] == ch` |
+| `ends_with_char(string s, char ch) -> bool` | `s` is non-empty and its last byte is `ch` |
+
+```text
+import std::string
+func main() -> void {
+    println(std::string::count_char("banana", 'a'))
+}
+```
+
+---
+
+## 10. Execution Model & v0.1 Limitations
 
 * **Memory Allocation:** All local variables and struct instances are allocated on the stack via LLVM `alloca`.
 * **No Dynamic Heap / GC:** Pointer allocation and heap operations are out of scope for v0.1.

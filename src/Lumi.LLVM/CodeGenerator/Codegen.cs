@@ -1,3 +1,4 @@
+using System.Text;
 using LLVMSharp.Interop;
 using Lumi.Core.Ast;
 using Lumi.Core.Ast.Statements;
@@ -23,8 +24,12 @@ public sealed class Codegen
     private readonly SemanticModel _semanticModel;
     private readonly Dictionary<string, StructLayoutInfo> _structLayouts = new();
 
+    // Identical string literals share one private constant global per module.
+    private readonly Dictionary<string, LLVMValueRef> _stringLiterals = new();
+
     // Track the return type of the function currently being generated
     private LLVMTypeRef _currentReturnType;
+    private string _currentReturnTypeName = TypeConst.Void;
     private VariableScope _currentScope;
 
     public Codegen(string moduleName, SemanticModel semanticModel)
@@ -90,7 +95,10 @@ public sealed class Codegen
             }
         }
 
-        _module.Verify(LLVMVerifierFailureAction.LLVMPrintMessageAction);
+        if (!_module.TryVerify(LLVMVerifierFailureAction.LLVMReturnStatusAction, out var message))
+        {
+            throw new InvalidOperationException($"LLVM module verification failed:\n{message}");
+        }
     }
 
     private void GenerateFunctionBody(
@@ -99,6 +107,7 @@ public sealed class Codegen
     {
         var resolvedReturnType = _semanticModel.GetType(funcNode);
         _currentReturnType = ResolveType(resolvedReturnType);
+        _currentReturnTypeName = resolvedReturnType;
 
         var entryBlock = _context.AppendBasicBlock(function, "entry");
         _builder.PositionAtEnd(entryBlock);
@@ -230,14 +239,14 @@ public sealed class Codegen
                 }
 
                 var returnValue = GenerateExpression(returnStatement.Expression);
-                var expectedTypeName = _semanticModel.GetType(returnStatement);
-                var expectedType = ResolveType(expectedTypeName);
 
+                // Convert to the declared return type, not the expression's own type
+                // (e.g. `return -1` is an i8 expression in an i32 function).
                 returnValue = CastInitializer(
                     returnValue,
                     returnStatement.Expression,
-                    expectedType,
-                    expectedTypeName,
+                    _currentReturnType,
+                    _currentReturnTypeName,
                     "ret_cast");
 
                 _builder.BuildRet(returnValue);
@@ -256,6 +265,9 @@ public sealed class Codegen
                     case "i8" or "i16" or "i32" or "i64"
                         or "u8" or "u16" or "u32" or "u64":
                         WriterUtils.EmitPrintInt(printValue, _module, _context, _builder);
+                        break;
+                    case TypeConst.String:
+                        WriterUtils.EmitPrintString(printValue, _module, _context, _builder);
                         break;
                     case TypeConst.Bool:
                         WriterUtils.EmitPrintBool(printValue, _module, _context, _builder);
@@ -669,6 +681,7 @@ public sealed class Codegen
             BinaryExpressionNode binary => GenerateBinary(binary),
             UnaryExpressionNode unary => GenerateUnary(unary),
             LiteralNode<char> character => LLVMValueRef.CreateConstInt(_context.Int8Type, character.Value),
+            StringLiteralNode str => GenerateStringLiteral(str),
             LiteralNode<bool> boolean => LLVMValueRef.CreateConstInt(_context.Int1Type, (ulong)(boolean.Value ? 1 : 0)),
             StructLiteralNode structLiteral => GenerateStructLiteral(structLiteral),
             ArrayLiteralNode arrayLiteral => GenerateArrayLiteral(arrayLiteral),
@@ -677,6 +690,36 @@ public sealed class Codegen
             MemberAccessNode member => GenerateMemberAccess(member),
             _ => throw new Exception("Unknown IR generation node target.")
         };
+    }
+
+    // A string value is a pointer to a NUL-terminated, UTF-8 byte array held in a
+    // private constant global.
+    private LLVMValueRef GenerateStringLiteral(StringLiteralNode literal)
+    {
+        if (_stringLiterals.TryGetValue(literal.Value, out var existing))
+        {
+            return existing;
+        }
+
+        var bytes = Encoding.UTF8.GetBytes(literal.Value);
+        var elements = new LLVMValueRef[bytes.Length + 1];
+
+        for (var i = 0; i < bytes.Length; i++)
+        {
+            elements[i] = LLVMValueRef.CreateConstInt(_context.Int8Type, bytes[i]);
+        }
+
+        elements[^1] = LLVMValueRef.CreateConstInt(_context.Int8Type, 0);
+
+        var initializer = LLVMValueRef.CreateConstArray(_context.Int8Type, elements);
+        var global = _module.AddGlobal(initializer.TypeOf, $".str.{_stringLiterals.Count}");
+        global.Initializer = initializer;
+        global.IsGlobalConstant = true;
+        global.Linkage = LLVMLinkage.LLVMPrivateLinkage;
+        global.UnnamedAddress = LLVMUnnamedAddr.LLVMGlobalUnnamedAddr;
+
+        _stringLiterals[literal.Value] = global;
+        return global;
     }
 
     private LLVMValueRef GenerateStructLiteral(StructLiteralNode literal)
@@ -748,9 +791,23 @@ public sealed class Codegen
         return _builder.BuildLoad2(fieldLlvmType, fieldPtr, $"load_{member.MemberName}");
     }
 
+    // len(string) -> i32, lowered to strlen (which returns i64).
+    private LLVMValueRef GenerateBuiltinLen(FunctionCallExpressionNode call)
+    {
+        var text = GenerateExpression(call.Arguments[0]);
+        var length = WriterUtils.EmitStringLength(text, _module, _context, _builder);
+
+        return _builder.BuildTrunc(length, _context.Int32Type, "len");
+    }
+
     private LLVMValueRef GenerateFunctionCall(
         FunctionCallExpressionNode functionCall)
     {
+        if (_semanticModel.IsBuiltinCall(functionCall))
+        {
+            return GenerateBuiltinLen(functionCall);
+        }
+
         var mangledName = _semanticModel.GetMangledName(functionCall);
         if (!_functions.TryGetValue(mangledName, out var functionInfo))
         {
@@ -847,6 +904,21 @@ public sealed class Codegen
             return GenerateShift(binary, left, right);
         }
 
+        if (_semanticModel.GetExpressionType(binary.Left) == TypeConst.String
+            && _semanticModel.GetExpressionType(binary.Right) == TypeConst.String
+            && binary.Operator is TypeConst.EqualsEquals or TypeConst.BangEquals)
+        {
+            var comparison = WriterUtils.EmitStringCompare(left, right, _module, _context, _builder);
+
+            return _builder.BuildICmp(
+                binary.Operator == TypeConst.EqualsEquals
+                    ? LLVMIntPredicate.LLVMIntEQ
+                    : LLVMIntPredicate.LLVMIntNE,
+                comparison,
+                LLVMValueRef.CreateConstInt(_context.Int32Type, 0),
+                "str.cmptmp");
+        }
+
         if (left.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind
             || right.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
         {
@@ -856,6 +928,19 @@ public sealed class Codegen
 
         var leftType = _semanticModel.GetExpressionType(binary.Left);
         var rightType = _semanticModel.GetExpressionType(binary.Right);
+
+        // Characters are bytes; the type checker only allows (in)equality on them.
+        if (leftType == TypeConst.Char && rightType == TypeConst.Char
+            && binary.Operator is TypeConst.EqualsEquals or TypeConst.BangEquals)
+        {
+            return _builder.BuildICmp(
+                binary.Operator == TypeConst.EqualsEquals
+                    ? LLVMIntPredicate.LLVMIntEQ
+                    : LLVMIntPredicate.LLVMIntNE,
+                left,
+                right,
+                "char.cmptmp");
+        }
 
         if (leftType == TypeConst.Bool && rightType == TypeConst.Bool)
         {
@@ -1182,6 +1267,7 @@ public sealed class Codegen
             TypeConst.I64 or TypeConst.U64 => _context.Int64Type,
 
             TypeConst.Char => _context.Int8Type,
+            TypeConst.String => LLVMTypeRef.CreatePointer(_context.Int8Type, 0),
             TypeConst.Void => _context.VoidType,
             TypeConst.Bool => _context.Int1Type,
 
@@ -1192,6 +1278,11 @@ public sealed class Codegen
             _ => throw new NotSupportedException(
                 $"Unsupported backend data type: {typeName}")
         };
+    }
+
+    public string GetModuleIr()
+    {
+        return _module.PrintToString();
     }
 
     public void DumpModuleToConsole()
@@ -1297,6 +1388,25 @@ public sealed class Codegen
                     $"{baseLumiType}.{field.Name}.ptr");
 
                 return (fieldPtr, field.LumiType, field.LlvmType);
+            }
+
+            case IndexExpressionNode indexExpr
+                when _semanticModel.GetExpressionType(indexExpr.Target) == TypeConst.String:
+            {
+                // A string is a pointer to bytes: load it, then index the bytes.
+                var stringPtr = GenerateExpression(indexExpr.Target);
+                var index = _llvmTypeHelper.ConvertInteger(
+                    GenerateExpression(indexExpr.Index),
+                    _semanticModel.GetExpressionType(indexExpr.Index),
+                    TypeConst.I64);
+
+                var bytePtr = _builder.BuildInBoundsGEP2(
+                    _context.Int8Type,
+                    stringPtr,
+                    new[] { index },
+                    "str_index_ptr");
+
+                return (bytePtr, TypeConst.Char, _context.Int8Type);
             }
 
             case IndexExpressionNode indexExpr:

@@ -34,4 +34,11 @@ public static class DiagnosticCodes
     public const string IndexOutOfBounds = "LUMI1012";
     public const string CircularImport = "LUMI5001";
     public const string ModuleNotFound = "LUMI5002";
+
+    // Lexer errors
+    public const string UnterminatedString = "LUMI6001";
+    public const string InvalidEscapeSequence = "LUMI6002";
+    public const string EmptyCharacter = "LUMI6003";
+    public const string MultiCharacter = "LUMI6004";
+    public const string UnterminatedCharacter = "LUMI6005";
 }

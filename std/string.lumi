@@ -1,0 +1,72 @@
+module std::string
+
+// Strings are immutable, NUL-terminated byte sequences. The helpers below only
+// read their arguments; none of them allocate.
+
+func empty() -> string {
+    return ""
+}
+
+func newline() -> string {
+    return "\n"
+}
+
+func identity(string value) -> string {
+    return value
+}
+
+func print_line(string value) -> void {
+    println(value)
+}
+
+func is_empty(string s) -> bool {
+    return len(s) == 0
+}
+
+func equals(string a, string b) -> bool {
+    return a == b
+}
+
+func count_char(string s, char target) -> i32 {
+    i32 count = 0
+    i32 n = len(s)
+
+    for i32 i = 0; i < n; i = i + 1 {
+        if (s[i] == target) {
+            count = count + 1
+        }
+    }
+
+    return count
+}
+
+// Returns the index of the first occurrence of target, or -1.
+func index_of(string s, char target) -> i32 {
+    i32 n = len(s)
+
+    for i32 i = 0; i < n; i = i + 1 {
+        if (s[i] == target) {
+            return i
+        }
+    }
+
+    return -1
+}
+
+func starts_with_char(string s, char ch) -> bool {
+    if (len(s) == 0) {
+        return false
+    }
+
+    return s[0] == ch
+}
+
+func ends_with_char(string s, char ch) -> bool {
+    i32 n = len(s)
+
+    if (n == 0) {
+        return false
+    }
+
+    return s[n - 1] == ch
+}

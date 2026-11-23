@@ -1,0 +1,7 @@
+<Project>
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'Lumi.Cli' or '$(MSBuildProjectName)' == 'Lumi.Core.Test' or '$(MSBuildProjectName)' == 'Lumi.LLVM.Test'">
+    <None Include="$(MSBuildThisFileDirectory)std\**\*.lumi"
+          Link="std\%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
