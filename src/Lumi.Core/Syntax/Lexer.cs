@@ -10,6 +10,8 @@ public sealed class Lexer
         { "print", TokenType.PrintFunc },
         { "println", TokenType.PrintFunc },
         { TypeConst.As, TokenType.KeywordAs },
+        { TypeConst.SizeOf, TokenType.KeywordSizeOf },
+        { TypeConst.AlignOf, TokenType.KeywordAlignOf },
         { TypeConst.Extern, TokenType.KeywordExtern },
         { TypeConst.Nil, TokenType.KeywordNil },
         { TypeConst.Module, TokenType.KeywordModule },

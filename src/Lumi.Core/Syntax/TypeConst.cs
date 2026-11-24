@@ -7,6 +7,8 @@ public static class TypeConst
     public const string Module = "module";
     public const string Extern = "extern";
     public const string As = "as";
+    public const string SizeOf = "sizeof";
+    public const string AlignOf = "alignof";
     public const string I8 = "i8";
     public const string I16 = "i16";
     public const string I32 = "i32";

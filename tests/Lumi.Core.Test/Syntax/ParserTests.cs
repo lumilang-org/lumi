@@ -594,4 +594,39 @@ func main() -> void {
         var outer = (CastExpressionNode)((VariableDeclarationNode)program.Functions[0].Body[1]).Initializer!;
         Assert.That(outer.Operand, Is.InstanceOf<CastExpressionNode>());
     }
+
+    [Test]
+    public void Parse_SizeOfAndAlignOf_AllTypeForms()
+    {
+        var program = Parse(@"
+struct Pair { u64 a u64 b }
+func main() -> usize {
+    usize a = sizeof(u8)
+    usize b = sizeof(*u8)
+    usize c = alignof(Pair)
+    usize d = sizeof(i32[4]) + alignof(u64) * 2
+    return sizeof(Pair)
+}");
+        var body = program.Functions[0].Body;
+
+        var a = (SizeOfExpressionNode)((VariableDeclarationNode)body[0]).Initializer!;
+        Assert.That(a.TargetType, Is.EqualTo("u8"));
+        Assert.That(((SizeOfExpressionNode)((VariableDeclarationNode)body[1]).Initializer!).TargetType, Is.EqualTo("*u8"));
+        Assert.That(((AlignOfExpressionNode)((VariableDeclarationNode)body[2]).Initializer!).TargetType, Is.EqualTo("Pair"));
+
+        var sum = (BinaryExpressionNode)((VariableDeclarationNode)body[3]).Initializer!;
+        Assert.That(((SizeOfExpressionNode)sum.Left).TargetType, Is.EqualTo("i32[4]"));
+        Assert.That(sum.Right, Is.InstanceOf<BinaryExpressionNode>());
+        Assert.That(((ReturnStatementNode)body[4]).Expression, Is.InstanceOf<SizeOfExpressionNode>());
+    }
+
+    [Test]
+    public void Parse_SizeOf_AsFunctionArgument()
+    {
+        var program = Parse("func main() -> void { f(&a, sizeof(Pair), alignof(Pair)) }");
+
+        var call = (FunctionCallExpressionNode)((ExpressionStatementNode)program.Functions[0].Body[0]).Expression;
+        Assert.That(call.Arguments[1], Is.InstanceOf<SizeOfExpressionNode>());
+        Assert.That(call.Arguments[2], Is.InstanceOf<AlignOfExpressionNode>());
+    }
 }

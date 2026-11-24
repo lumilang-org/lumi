@@ -1100,4 +1100,31 @@ func main() -> void {
             Assert.That(diagnostics.Diagnostics.Any(d => d.Message.Contains("Cannot cast type")), Is.True, source);
         }
     }
+
+    [Test]
+    public void Check_SizeOfAndAlignOf_AreUsize()
+    {
+        var (program, model, diagnostics) = Check(
+            "struct P { u8 a u64 b }\nfunc main() -> void { usize a = sizeof(P)\n usize b = alignof(*u8)\n usize c = sizeof(i32[3]) }");
+
+        Assert.That(diagnostics.HasErrors, Is.False);
+        var init = ((VariableDeclarationNode)program.Functions[0].Body[0]).Initializer!;
+        Assert.That(model.GetExpressionType(init), Is.EqualTo("usize"));
+    }
+
+    [Test]
+    public void Check_SizeOf_RejectsUnknownAndVoidTypes()
+    {
+        foreach (var source in new[]
+                 {
+                     "func main() -> void { usize a = sizeof(Missing) }",
+                     "func main() -> void { usize a = alignof(void) }",
+                     "func main() -> void { i32 a = sizeof(i32) }"
+                 })
+        {
+            var (_, _, diagnostics) = Check(source);
+
+            Assert.That(diagnostics.HasErrors, Is.True, source);
+        }
+    }
 }

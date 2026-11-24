@@ -347,4 +347,14 @@ public class LexerTests
                 Is.EqualTo(TokenType.Identifier), name);
         }
     }
+
+    [Test]
+    public void Lex_SizeOfAndAlignOf_AreKeywords()
+    {
+        var lexer = new Lexer("sizeof alignof sizeofx", new DiagnosticBag(), "test.lumi");
+
+        Assert.That(lexer.NextToken().Type, Is.EqualTo(TokenType.KeywordSizeOf));
+        Assert.That(lexer.NextToken().Type, Is.EqualTo(TokenType.KeywordAlignOf));
+        Assert.That(lexer.NextToken().Type, Is.EqualTo(TokenType.Identifier));
+    }
 }

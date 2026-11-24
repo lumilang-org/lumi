@@ -216,6 +216,10 @@ counts[idx++]--  // idx is evaluated once
 
 Allowed: identity, pointer to any pointer (`*u8 as *Point`), integer to integer (truncates or sign/zero-extends by the source type), and pointer to/from `usize`. Everything else (structs by value, `bool`, `string`, float) is `LUMI1002`.
 
+### 6.5 `sizeof` and `alignof`
+
+`sizeof(Type)` and `alignof(Type)` are `usize` constants computed from the target's data layout (struct padding included), e.g. `arena_alloc(&arena, sizeof(Pair), alignof(Pair))`. `Type` can be any non-`void` type: primitives, `*T`, structs and arrays.
+
 ## 7. Control Flow
 
 ### 7.1 Conditionals (`if` / `else`)

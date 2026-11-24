@@ -926,6 +926,21 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         return leftExpr;
     }
 
+    // sizeof(Type) / alignof(Type)
+    private ExpressionNode ParseTypeIntrinsic()
+    {
+        var keyword = Current;
+        Advance();
+        Consume(TokenType.LParen);
+        var targetType = ParseTypeName();
+        var closing = Consume(TokenType.RParen);
+        var span = CreateSpan(keyword.Span.Start, closing.Span.End);
+
+        return keyword.Type == TokenType.KeywordSizeOf
+            ? new SizeOfExpressionNode(targetType, span)
+            : new AlignOfExpressionNode(targetType, span);
+    }
+
     private ExpressionNode ParseCast(ExpressionNode operand)
     {
         Consume(TokenType.KeywordAs);
@@ -984,6 +999,9 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
                 return ParseCharLiteral();
             case TokenType.String:
                 return ParseStringLiteral();
+            case TokenType.KeywordSizeOf:
+            case TokenType.KeywordAlignOf:
+                return ParseTypeIntrinsic();
             case TokenType.KeywordNil:
                 return new NilLiteralNode(Consume(TokenType.KeywordNil).Span);
             case TokenType.BooleanLiteral:

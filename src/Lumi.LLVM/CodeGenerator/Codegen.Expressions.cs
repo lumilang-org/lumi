@@ -28,6 +28,10 @@ public sealed partial class Codegen
             AddressOfExpressionNode addressOf => ResolveTargetAddress(addressOf.Operand).Pointer,
             DereferenceExpressionNode dereference => GenerateDereference(dereference),
             CastExpressionNode cast => GenerateCast(cast),
+            SizeOfExpressionNode sizeOf => LLVMValueRef.CreateConstInt(
+                _usizeType, _dataLayout.ABISizeOfType(ResolveType(sizeOf.TargetType))),
+            AlignOfExpressionNode alignOf => LLVMValueRef.CreateConstInt(
+                _usizeType, _dataLayout.ABIAlignmentOfType(ResolveType(alignOf.TargetType))),
             LiteralNode<char> character => LLVMValueRef.CreateConstInt(_context.Int8Type, character.Value),
             StringLiteralNode str => GenerateStringLiteral(str),
             // Pointers are opaque, so one null constant serves every pointer type.

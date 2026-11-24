@@ -20,6 +20,7 @@ public sealed partial class Codegen
     // Identical string literals share one private constant global per module.
     private readonly Dictionary<string, LLVMValueRef> _stringLiterals = new();
     private readonly Dictionary<string, StructLayoutInfo> _structLayouts = new();
+    private readonly LLVMTargetDataRef _dataLayout;
     private readonly LLVMTypeRef _usizeType;
 
     // Track the return type of the function currently being generated
@@ -42,7 +43,8 @@ public sealed partial class Codegen
         LLVMSharp.Interop.LLVM.InitializeNativeAsmParser();
 
         // usize is as wide as a pointer on the target the module is compiled for.
-        _usizeType = _context.GetIntPtrType(CreateTargetMachine().CreateTargetDataLayout());
+        _dataLayout = CreateTargetMachine().CreateTargetDataLayout();
+        _usizeType = _context.GetIntPtrType(_dataLayout);
         _llvmTypeHelper = new LlvmTypeHelper(_context, _builder, (int)_usizeType.IntWidth);
     }
 

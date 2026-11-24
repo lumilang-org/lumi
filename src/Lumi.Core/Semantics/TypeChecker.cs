@@ -613,6 +613,8 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             StringLiteralNode _ => TypeConst.String,
             NilLiteralNode _ => TypeConst.Nil,
             CastExpressionNode cast => CheckCast(cast, scope),
+            SizeOfExpressionNode sizeOf => CheckTypeIntrinsic(sizeOf, sizeOf.TargetType),
+            AlignOfExpressionNode alignOf => CheckTypeIntrinsic(alignOf, alignOf.TargetType),
             LiteralNode<bool> _ => TypeConst.Bool,
             ArrayLiteralNode arrayLiteral => CheckArrayLiteral(arrayLiteral, scope, expectedType),
             IndexExpressionNode indexExpression => CheckIndexExpression(indexExpression, scope),
@@ -999,6 +1001,19 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         }
 
         return PointerTypes.Pointee(operandType);
+    }
+
+    // sizeof(T) / alignof(T) -> usize.
+    private string CheckTypeIntrinsic(ExpressionNode node, string type)
+    {
+        ValidateType(type, node.Span);
+
+        if (type == TypeConst.Void)
+        {
+            Report(DiagnosticCodes.TypeMismatch, "Cannot take the size or alignment of 'void'.", node.Span);
+        }
+
+        return TypeConst.Usize;
     }
 
     // expr as T. Allowed: identity, pointer <-> pointer, integer <-> integer and
