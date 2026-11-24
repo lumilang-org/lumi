@@ -1195,4 +1195,45 @@ func pool_init(*Pool pool) -> bool {
         Assert.That(diagnostics.HasErrors, Is.False,
             string.Join("\n", diagnostics.Diagnostics.Select(d => d.Message)));
     }
+
+    [Test]
+    public void Check_PointerPlusUsize_KeepsThePointerType()
+    {
+        var (program, model, diagnostics) = Check(@"
+struct Entity { i32 hp }
+func main() -> void {
+    usize n = 2
+    *u8 a = nil
+    *Entity e = nil
+    **i32 pp = nil
+    *u8 b = a + n
+    *Entity c = e + n
+    *Entity d = n + e
+    **i32 f = pp + n
+    *Entity g = e - n
+}");
+
+        Assert.That(diagnostics.HasErrors, Is.False);
+        var init = ((VariableDeclarationNode)program.Functions[0].Body[5]).Initializer!;
+        Assert.That(model.GetExpressionType(init), Is.EqualTo("*std_Entity".Replace("std_", "")));
+    }
+
+    [Test]
+    public void Check_InvalidPointerArithmetic_ReportsTypeMismatch()
+    {
+        foreach (var source in new[]
+                 {
+                     "func main() -> void { *u8 a = nil\n *u8 b = nil\n *u8 c = a + b }",
+                     "func main() -> void { *u8 a = nil\n *u8 b = nil\n usize c = a - b }",
+                     "func main() -> void { *u8 a = nil\n usize n = 1\n *u8 c = a * n }",
+                     "func main() -> void { *u8 a = nil\n usize n = 1\n *u8 c = n - a }",
+                     "func main() -> void { *u8 a = nil\n *u8 c = a + 1.5 }",
+                     "func main() -> void { *u8 a = nil\n usize n = 1\n *i32 c = a + n }"
+                 })
+        {
+            var (_, _, diagnostics) = Check(source);
+
+            Assert.That(CountCode(diagnostics, DiagnosticCodes.TypeMismatch), Is.GreaterThan(0), source);
+        }
+    }
 }

@@ -255,4 +255,60 @@ func main() -> void {
         if (output is null) return;
         Assert.Equal("10\n20\n40\n40\n40\n40\n20\n", output);
     }
+
+    [Fact]
+    public void PointerPlusUsize_SteppesAcrossContiguousStructs()
+    {
+        var ir = CompileToIr(@"
+struct Vec2 { i32 x i32 y }
+struct Entity { Vec2 pos Vec2 vel i32 hp }
+func main() -> void {
+    Entity[3] items
+    *Entity base = &items[0]
+    usize one = 1
+    usize two = 2
+    (base + 0).hp = 10
+    (base + one).hp = 20
+    (base + two).hp = 30
+    (base + one).pos.x = 5
+    println(sizeof(Entity))
+    println((base + 0).hp)
+    println((base + one).hp)
+    println((base + two).hp)
+    println(items[1].hp)
+    println(items[1].pos.x)
+    println((base + two) as usize - base as usize)
+}");
+
+        Assert.Contains("getelementptr %Entity, ptr", ir);
+
+        var output = Run(ir);
+        if (output is null) return;
+        Assert.Equal("20\n10\n20\n30\n20\n5\n40\n", output.Replace("\r", ""));
+    }
+
+    [Fact]
+    public void PointerPlusUsize_OnBytesAndNestedPointers()
+    {
+        var output = Run(CompileToIr(@"
+import std::mem
+func main() -> void {
+    std::mem::Arena arena
+    std::mem::arena_init(&arena, 64)
+    *u8 a = std::mem::arena_alloc(&arena, 24, 8)
+    usize off = 16
+    *u8 b = a + off
+    println(b as usize - a as usize)
+
+    i32 x = 1
+    *i32[2] slots = [nil, nil]
+    **i32 pp = &slots[0]
+    usize one = 1
+    println((pp + one) as usize - pp as usize)
+    std::mem::arena_destroy(&arena)
+}"));
+
+        if (output is null) return;
+        Assert.Equal("16\n8\n", output.Replace("\r", ""));
+    }
 }
