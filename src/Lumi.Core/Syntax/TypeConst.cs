@@ -2,6 +2,7 @@ namespace Lumi.Core.Syntax;
 
 public static class TypeConst
 {
+    public const string Let = "let";
     public const string Void = "void";
     public const string Import = "import";
     public const string Module = "module";

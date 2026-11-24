@@ -503,7 +503,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             offset++;
         }
 
-        if (offset == 0 && IsTypeToken(Current.Type))
+        if (offset == 0 && (IsTypeToken(Current.Type) || Current.Type == TokenType.KeywordLet))
         {
             return true;
         }
@@ -1264,14 +1264,32 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
     {
         var start = Current.Span.Start;
 
-        var type = ParseTypeName();
+        // `let name = expr` infers the type (TypeConst.Let marks it for the type checker);
+        // `let name: Type = expr` is an ordinary declaration with the type after the name.
+        var isLet = Current.Type == TokenType.KeywordLet;
+        var type = isLet ? Consume(TokenType.KeywordLet).Value : ParseTypeName();
 
         var nameToken = Current;
         var name = nameToken.Value;
         Consume(TokenType.Identifier);
 
+        if (isLet && Current.Type == TokenType.Colon)
+        {
+            Consume(TokenType.Colon);
+            type = ParseTypeName();
+        }
+
         ExpressionNode? initializer = null;
         var end = nameToken.Span.End;
+
+        if (isLet && Current.Type != TokenType.Assign)
+        {
+            Report(
+                DiagnosticCodes.ExpectedToken,
+                $"Syntax Error: 'let {name}' needs an initializer.",
+                Current.Span);
+            throw new ParseException();
+        }
 
         if (Current.Type == TokenType.Assign)
         {

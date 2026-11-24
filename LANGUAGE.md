@@ -106,6 +106,8 @@ u16 counter = 20
 Vec p = Vec { x: 10, y: 20 }
 ```
 
+`let` infers the type from the initializer: `let x = 20` (`i32`), `let s = "Sam"`, `let p = raw as *Entity`, `let n = sizeof(Entity)` (`usize`). An initializer is required, and `nil` or a `void` call can't be inferred. `let x: i64 = 5` gives an explicit type, which is checked like any declaration.
+
 ### 3.2 Assignment & Mutation
 
 Variables and struct fields can be reassigned using the `=` assignment operator:

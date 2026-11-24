@@ -233,6 +233,49 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
     {
         switch (statement)
         {
+            case VariableDeclarationNode { Type: TypeConst.Let } letDecl:
+            {
+                // let name = expr: the variable takes the initializer's type.
+                // Integer literals default to i32 instead of the smallest type that fits.
+                var isIntegerLiteral = letDecl.Initializer is LiteralNode<string>
+                    or UnaryExpressionNode { Operator: "-", Operand: LiteralNode<string> };
+                var inferred = CheckExpression(
+                    letDecl.Initializer!,
+                    scope,
+                    isIntegerLiteral ? TypeConst.I32 : null);
+
+                if (isIntegerLiteral && inferred is TypeConst.I8 or TypeConst.I16)
+                {
+                    inferred = TypeConst.I32;
+                }
+                EnsureValueExpression(letDecl.Initializer!, inferred);
+
+                if (inferred == TypeConst.Nil)
+                {
+                    Report(DiagnosticCodes.TypeMismatch,
+                        $"Cannot infer the type of '{letDecl.Name}' from 'nil'; " +
+                        "declare it with a pointer type instead.",
+                        letDecl.Initializer!.Span);
+                    inferred = TypeConst.Error;
+                }
+                else if (inferred == TypeConst.Void)
+                {
+                    inferred = TypeConst.Error;
+                }
+
+                SemanticModel.SetType(letDecl, inferred);
+
+                if (!scope.TryDeclare(letDecl.Name, inferred))
+                {
+                    Report(
+                        DiagnosticCodes.DuplicateVariable,
+                        $"Variable '{letDecl.Name}' is already declared in this scope.",
+                        letDecl.Span);
+                }
+
+                break;
+            }
+
             case VariableDeclarationNode varDecl:
 
                 ValidateType(varDecl.Type, varDecl.Span);

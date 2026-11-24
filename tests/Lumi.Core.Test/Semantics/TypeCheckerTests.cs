@@ -1236,4 +1236,91 @@ func main() -> void {
             Assert.That(CountCode(diagnostics, DiagnosticCodes.TypeMismatch), Is.GreaterThan(0), source);
         }
     }
+
+    private static string LetType(SemanticModel model, ProgramNode program, int index)
+    {
+        return model.GetType(program.Functions[^1].Body[index]);
+    }
+
+    [Test]
+    public void Check_Let_InfersFromTheInitializer()
+    {
+        var (program, model, diagnostics) = Check(@"
+struct Pair { i32 a i32 b }
+func five() -> u8 { return 5 }
+func main() -> void {
+    *u8 raw = nil
+    let a = 20
+    let s = ""Sam""
+    let flag = true
+    let c = 'x'
+    let p = raw as *Pair
+    let size = sizeof(Pair)
+    let align = alignof(Pair)
+    let pair = Pair { a: 1, b: 2 }
+    let sum = a + 1
+    let cmp = a > 3
+    let call = five()
+    let addr = &a
+    let f = 1.5
+    let n = -a
+}");
+
+        Assert.That(diagnostics.HasErrors, Is.False,
+            string.Join("\n", diagnostics.Diagnostics.Select(d => d.Message)));
+
+        var expected = new[]
+        {
+            "i32", "string", "bool", "char", "*Pair", "usize", "usize", "Pair", "i32", "bool", "u8", "*i32", "f64", "i32"
+        };
+
+        for (var i = 0; i < expected.Length; i++)
+        {
+            Assert.That(LetType(model, program, i + 1), Is.EqualTo(expected[i]), $"statement {i + 1}");
+        }
+    }
+
+    [Test]
+    public void Check_Let_VariableIsUsableWithItsInferredType()
+    {
+        var (_, _, diagnostics) = Check(@"
+func main() -> void {
+    let x = 20
+    x = 30
+    i32 y = x
+    let flag = true
+    if flag { y = x }
+}");
+
+        Assert.That(diagnostics.HasErrors, Is.False);
+
+        (_, _, diagnostics) = Check("func main() -> void { let x = 20\n x = true }");
+        Assert.That(CountCode(diagnostics, DiagnosticCodes.TypeMismatch), Is.EqualTo(1));
+    }
+
+    [Test]
+    public void Check_Let_Uninferable_ReportsTypeMismatch()
+    {
+        foreach (var source in new[]
+                 {
+                     "func main() -> void { let x = nil }",
+                     "func f() -> void { }\nfunc main() -> void { let x = f() }",
+                     "func main() -> void { let x: i32 = true }",
+                     "func main() -> void { *u8 p = nil\n let x: *i32 = p }"
+                 })
+        {
+            var (_, _, diagnostics) = Check(source);
+
+            Assert.That(diagnostics.HasErrors, Is.True, source);
+        }
+
+        var (_, _, nilDiagnostics) = Check("func main() -> void { let x = nil }");
+        Assert.That(CountCode(nilDiagnostics, DiagnosticCodes.TypeMismatch), Is.EqualTo(1));
+
+        var (_, _, annotated) = Check("func main() -> void { let x: i32 = true }");
+        Assert.That(CountCode(annotated, DiagnosticCodes.TypeMismatch), Is.EqualTo(1));
+
+        var (_, _, duplicate) = Check("func main() -> void { let x = 1\n let x = 2 }");
+        Assert.That(CountCode(duplicate, DiagnosticCodes.DuplicateVariable), Is.EqualTo(1));
+    }
 }

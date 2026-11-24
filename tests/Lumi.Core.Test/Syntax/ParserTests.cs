@@ -629,4 +629,32 @@ func main() -> usize {
         Assert.That(call.Arguments[1], Is.InstanceOf<SizeOfExpressionNode>());
         Assert.That(call.Arguments[2], Is.InstanceOf<AlignOfExpressionNode>());
     }
+
+    [Test]
+    public void Parse_Let_InferredAndAnnotated()
+    {
+        var program = Parse("func main() -> void { let x = 20\n let y: i64 = 5\n let s = \"Sam\" }");
+        var body = program.Functions[0].Body;
+
+        var inferred = (VariableDeclarationNode)body[0];
+        Assert.That(inferred.Type, Is.EqualTo(TypeConst.Let));
+        Assert.That(inferred.Name, Is.EqualTo("x"));
+        Assert.That(inferred.Initializer, Is.Not.Null);
+
+        var annotated = (VariableDeclarationNode)body[1];
+        Assert.That(annotated.Type, Is.EqualTo("i64"));
+        Assert.That(annotated.Name, Is.EqualTo("y"));
+
+        Assert.That(((VariableDeclarationNode)body[2]).Initializer, Is.InstanceOf<StringLiteralNode>());
+    }
+
+    [Test]
+    public void Parse_Let_WithoutInitializer_IsASyntaxError()
+    {
+        var diagnostics = new DiagnosticBag();
+        var tokens = new Lexer("func main() -> void { let x }", diagnostics, "test.lumi").Tokenize();
+        new Parser(tokens, diagnostics, "test.lumi").ParseProgram();
+
+        Assert.That(diagnostics.HasErrors, Is.True);
+    }
 }
