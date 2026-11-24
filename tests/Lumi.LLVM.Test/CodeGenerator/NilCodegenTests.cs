@@ -311,4 +311,70 @@ func main() -> void {
         if (output is null) return;
         Assert.Equal("16\n8\n", output.Replace("\r", ""));
     }
+
+    [Fact]
+    public void PointerIndexing_ReadsWritesAndCopiesStructElements()
+    {
+        var ir = CompileToIr(@"
+struct Item { i32 id i32 qty i32 x i32 y }
+struct Room { *Item items usize count }
+func main() -> void {
+    Item[3] storage
+    Room room = Room { items: &storage[0], count: 0 }
+    *Room r = &room
+    let buf = r.items
+    usize i = 0
+    while i < 3 {
+        buf[i].id = i as i32 + 1
+        buf[i].qty = 10
+        i = i + 1
+    }
+    buf[2] = buf[0]
+    buf[1].qty++
+    r.items[r.count + 1].x = 5
+    let n: i64 = 1
+    println(buf[0].id)
+    println(buf[1].id)
+    println(buf[2].id)
+    println(buf[1].qty)
+    println(r.items[1].x)
+    println(storage[2].qty)
+    println(sizeof(Item))
+    println(&buf[2] as usize - &buf[0] as usize)
+    println(buf[n].id)
+}");
+
+        Assert.Contains("ptr_index_ptr", ir);
+
+        var output = Run(ir);
+        if (output is null) return;
+        Assert.Equal("1\n2\n1\n11\n5\n10\n16\n32\n2\n", output.Replace("\r", ""));
+    }
+
+    [Fact]
+    public void PointerIndexing_ScalarsAndArenaBuffers()
+    {
+        var output = Run(CompileToIr(@"
+import std::mem
+func main() -> void {
+    std::mem::Arena arena
+    std::mem::arena_init(&arena, 64)
+    let nums = std::mem::arena_alloc(&arena, sizeof(i64) * 4, alignof(i64)) as *i64
+    usize i = 0
+    while i < 4 {
+        nums[i] = (i as i64) * 100
+        i = i + 1
+    }
+    let bytes = nums as *u8
+    bytes[0] = 7
+    println(nums[0])
+    println(nums[3])
+    println(bytes[0])
+    println(nums[1] + nums[2])
+    std::mem::arena_destroy(&arena)
+}"));
+
+        if (output is null) return;
+        Assert.Equal("7\n300\n7\n300\n", output.Replace("\r", ""));
+    }
 }

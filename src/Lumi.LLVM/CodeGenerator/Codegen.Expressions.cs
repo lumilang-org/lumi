@@ -353,6 +353,23 @@ public sealed partial class Codegen
                 return (bytePtr, TypeConst.Char, _context.Int8Type);
             }
 
+            case IndexExpressionNode indexExpr
+                when PointerTypes.IsPointer(_semanticModel.GetExpressionType(indexExpr.Target)):
+            {
+                // p[i] on a *T: step i elements of T from the pointer's value.
+                var pointer = GenerateExpression(indexExpr.Target);
+                var elementTypeName = _semanticModel.GetExpressionType(indexExpr);
+                var index = _llvmTypeHelper.ConvertInteger(
+                    GenerateExpression(indexExpr.Index),
+                    _semanticModel.GetExpressionType(indexExpr.Index),
+                    TypeConst.I64);
+
+                var elementType = ResolveType(elementTypeName);
+                var elementPtr = _builder.BuildGEP2(elementType, pointer, new[] { index }, "ptr_index_ptr");
+
+                return (elementPtr, elementTypeName, elementType);
+            }
+
             case IndexExpressionNode indexExpr:
             {
                 var (basePtr, baseLumiType, baseLlvmType) = ResolveTargetAddress(indexExpr.Target);

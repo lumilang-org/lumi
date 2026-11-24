@@ -1571,6 +1571,18 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             return TypeConst.Char;
         }
 
+        // p[i] on a *T is *(p + i): the element at offset i, with no bounds check.
+        if (PointerTypes.IsPointer(targetType))
+        {
+            if (!TypePromoter.IsIntegerType(indexType))
+            {
+                Report(DiagnosticCodes.TypeMismatch, $"Pointer index must be an integer, but got '{indexType}'.",
+                    indexExpr.Index.Span);
+            }
+
+            return PointerTypes.Pointee(targetType);
+        }
+
         if (!IsArrayType(targetType))
         {
             Report(DiagnosticCodes.TypeMismatch, $"Cannot index into non-array type '{targetType}'.",

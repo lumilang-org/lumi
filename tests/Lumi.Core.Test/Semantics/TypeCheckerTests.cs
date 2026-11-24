@@ -1323,4 +1323,52 @@ func main() -> void {
         var (_, _, duplicate) = Check("func main() -> void { let x = 1\n let x = 2 }");
         Assert.That(CountCode(duplicate, DiagnosticCodes.DuplicateVariable), Is.EqualTo(1));
     }
+
+    [Test]
+    public void Check_PointerIndexing_YieldsThePointee()
+    {
+        var (program, model, diagnostics) = Check(@"
+struct Item { i32 id }
+struct Room { *Item items usize count }
+func main() -> void {
+    *Item buf = nil
+    *Room room = nil
+    usize i = 0
+    let a = buf[0]
+    let b = buf[i]
+    let c = room.items[room.count]
+    buf[i].id = 3
+    buf[1] = buf[i]
+    buf[i + 1].id++
+    **Item pp = nil
+    let d = pp[2]
+    let e = buf[i as u8]
+}");
+
+        Assert.That(diagnostics.HasErrors, Is.False,
+            string.Join("\n", diagnostics.Diagnostics.Select(d => d.Message)));
+        var body = program.Functions[0].Body;
+        Assert.That(model.GetType(body[3]), Is.EqualTo("Item"));
+        Assert.That(model.GetType(body[5]), Is.EqualTo("Item"));
+        Assert.That(model.GetType(body[10]), Is.EqualTo("*Item"));
+    }
+
+    [Test]
+    public void Check_PointerIndexing_RejectsInvalidIndexAndTargets()
+    {
+        foreach (var source in new[]
+                 {
+                     "func main() -> void { *i32 p = nil\n let a = p[true] }",
+                     "func main() -> void { *i32 p = nil\n let a = p[1.5] }",
+                     "func main() -> void { *i32 p = nil\n let a = p[p] }",
+                     "func main() -> void { i32 p = 1\n let a = p[0] }",
+                     "func main() -> void { *i32 p = nil\n p[true] = 1 }",
+                     "func main() -> void { *i32 p = nil\n p[0] = true }"
+                 })
+        {
+            var (_, _, diagnostics) = Check(source);
+
+            Assert.That(CountCode(diagnostics, DiagnosticCodes.TypeMismatch), Is.GreaterThan(0), source);
+        }
+    }
 }
