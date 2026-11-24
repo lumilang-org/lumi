@@ -40,9 +40,11 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             }
         }
 
+        var returnType = ResolveType(func.ReturnType);
+
         foreach (var statement in func.Body)
         {
-            CheckStatement(statement, scope, func.ReturnType);
+            CheckStatement(statement, scope, returnType);
         }
 
         if (func.ReturnType != TypeConst.Void &&
@@ -709,6 +711,12 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             return TypeConst.Error;
         }
 
+        // p.field on a *Struct reads through the pointer, like (*p).field.
+        if (PointerTypes.IsPointer(targetType))
+        {
+            targetType = PointerTypes.Pointee(targetType);
+        }
+
         if (IsArrayType(targetType))
         {
             Report(DiagnosticCodes.TypeMismatch,
@@ -1008,6 +1016,9 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
     {
         ValidateType(type, node.Span);
 
+        // Codegen reads the module-resolved operand type back from the mangled-name slot.
+        SemanticModel.SetMangledName(node, ResolveType(type));
+
         if (type == TypeConst.Void)
         {
             Report(DiagnosticCodes.TypeMismatch, "Cannot take the size or alignment of 'void'.", node.Span);
@@ -1021,8 +1032,8 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
     private string CheckCast(CastExpressionNode cast, SymbolTable scope)
     {
         var sourceType = CheckExpression(cast.Operand, scope);
-        var targetType = cast.TargetType;
-        ValidateType(targetType, cast.Span);
+        ValidateType(cast.TargetType, cast.Span);
+        var targetType = ResolveType(cast.TargetType);
 
         if (sourceType == TypeConst.Error)
         {

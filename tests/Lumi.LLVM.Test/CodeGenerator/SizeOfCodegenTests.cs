@@ -56,7 +56,7 @@ func main() -> void {
     *Pair p = std::mem::arena_alloc(&arena, sizeof(Pair), alignof(Pair)) as *Pair
     (*p).b = 3
     println((*p).b)
-    println(arena.offset)
+    println(arena.head.offset)
 }"));
 
         if (output is null) return;

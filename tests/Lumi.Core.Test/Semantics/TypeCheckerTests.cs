@@ -1127,4 +1127,72 @@ func main() -> void {
             Assert.That(diagnostics.HasErrors, Is.True, source);
         }
     }
+
+    [Test]
+    public void Check_PointerToStruct_AutoDereferencesMemberAccess()
+    {
+        var (_, model, diagnostics) = Check(@"
+struct Inner { i32 v }
+struct Outer { i32 a Inner inner }
+func get(*Outer p) -> *Outer { return p }
+func main() -> void {
+    Outer o = Outer { a: 1, inner: Inner { v: 2 } }
+    *Outer p = &o
+    p.a = 5
+    p.inner.v = 6
+    i32 x = p.a + p.inner.v
+    i32 y = get(p).a
+    p.a++
+}");
+
+        Assert.That(diagnostics.HasErrors, Is.False);
+    }
+
+    [Test]
+    public void Check_PointerToStruct_RejectsBadMembers()
+    {
+        foreach (var source in new[]
+                 {
+                     "struct S { i32 a }\nfunc main() -> void { S s = S { a: 1 }\n *S p = &s\n i32 x = p.nope }",
+                     "struct S { i32 a }\nfunc main() -> void { S s = S { a: 1 }\n *S p = &s\n p.nope = 1 }",
+                     "func main() -> void { *u8 p = nil\n u8 x = p.field }",
+                     "func main() -> void { *u8 p = nil\n p.field = 1 }"
+                 })
+        {
+            var (_, _, diagnostics) = Check(source);
+
+            Assert.That(CountCode(diagnostics, DiagnosticCodes.TypeMismatch), Is.GreaterThan(0), source);
+        }
+    }
+
+    [Test]
+    public void Check_StructPointers_InsideNamedModule_ResolveConsistently()
+    {
+        var (_, _, diagnostics) = Check(@"
+module std::mem
+extern func malloc(usize size) -> *u8
+struct Block {
+    *Block next
+    usize cap
+}
+struct Pool {
+    *Block head
+}
+func block_new(usize cap) -> *Block {
+    *Block block = malloc(sizeof(Block)) as *Block
+    block.next = nil
+    block.cap = cap
+    return block
+}
+func pool_init(*Pool pool) -> bool {
+    *Block first = block_new(8)
+    (*pool).head = first
+    (*pool).head = block_new(16) as *Block
+    usize size = sizeof(Block) + alignof(*Block)
+    return true
+}");
+
+        Assert.That(diagnostics.HasErrors, Is.False,
+            string.Join("\n", diagnostics.Diagnostics.Select(d => d.Message)));
+    }
 }

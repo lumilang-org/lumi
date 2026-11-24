@@ -93,6 +93,8 @@ func bump(*i32 n) -> void { *n = *n + 1 }
 
 ---
 
+Member access also works through a struct pointer: `p.field` is `(*p).field`, for reads and assignments (`p.inner.v = 1`). Only one pointer level is dereferenced automatically.
+
 ## 3. Variables & Scope
 
 ### 3.1 Variable Declarations

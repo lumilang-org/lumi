@@ -3,48 +3,80 @@ module std::mem
 extern func malloc(usize size) -> *u8
 extern func free(*u8 ptr) -> void
 
-struct Arena {
+struct ArenaBlock {
+    *ArenaBlock next
     *u8 buf
     usize offset
     usize capacity
 }
 
-func arena_init(*Arena arena, usize capacity) -> bool {
-    if capacity == 0 {
-        (*arena).buf = nil
-        (*arena).offset = 0
-        (*arena).capacity = 0
-        return false
+struct Arena {
+    *ArenaBlock head
+    *ArenaBlock current
+    usize block_capacity
+}
+
+func arena_block_new(usize cap) -> *ArenaBlock {
+    if cap == 0 {
+        return nil
     }
 
-    *u8 mem = malloc(capacity)
+    *ArenaBlock block = malloc(sizeof(ArenaBlock)) as *ArenaBlock
+    if block == nil {
+        return nil
+    }
 
+    *u8 mem = malloc(cap)
     if mem == nil {
-        (*arena).buf = nil
-        (*arena).offset = 0
-        (*arena).capacity = 0
+        free(block as *u8)
+        return nil
+    }
+
+    block.next = nil
+    block.buf = mem
+    block.offset = 0
+    block.capacity = cap
+    return block
+}
+
+func arena_init(*Arena arena, usize initial_capacity) -> bool {
+    *ArenaBlock first = arena_block_new(initial_capacity)
+    if first == nil {
+        (*arena).head = nil
+        (*arena).current = nil
+        (*arena).block_capacity = 0
         return false
     }
 
-    (*arena).buf = mem
-    (*arena).offset = 0
-    (*arena).capacity = capacity
+    (*arena).head = first
+    (*arena).current = first
+    (*arena).block_capacity = initial_capacity
     return true
-    
 }
 
 func arena_reset(*Arena arena) -> void {
-    (*arena).offset = 0
+    *ArenaBlock cur = (*arena).head
+    while cur != nil {
+        cur.offset = 0
+        cur = cur.next
+    }
+    (*arena).current = (*arena).head
 }
 
 func arena_destroy(*Arena arena) -> void {
-    if (*arena).buf != nil {
-        free((*arena).buf)
+    *ArenaBlock cur = (*arena).head
+    while cur != nil {
+        *ArenaBlock next = cur.next
+        if cur.buf != nil {
+            free(cur.buf)
+        }
+        free(cur as *u8)
+        cur = next
     }
 
-    (*arena).buf = nil
-    (*arena).offset = 0
-    (*arena).capacity = 0
+    (*arena).head = nil
+    (*arena).current = nil
+    (*arena).block_capacity = 0
 }
 
 func arena_alloc(*Arena arena, usize size, usize align) -> *u8 {
@@ -52,18 +84,32 @@ func arena_alloc(*Arena arena, usize size, usize align) -> *u8 {
         return nil
     }
 
+    *ArenaBlock block = (*arena).current
+    if block == nil {
+        return nil
+    }
+
     usize mask = ~(align - 1)
-    usize aligned = ((*arena).offset + align - 1) & mask
+    usize aligned = (block.offset + align - 1) & mask
 
-    if aligned > (*arena).capacity {
-        return nil
+    if aligned > block.capacity || size > block.capacity - aligned {
+        usize needed = aligned + size
+        usize next_cap = (*arena).block_capacity
+        if needed > next_cap {
+            next_cap = needed
+        }
+
+        *ArenaBlock grown = arena_block_new(next_cap)
+        if grown == nil {
+            return nil
+        }
+
+        block.next = grown
+        (*arena).current = grown
+        block = grown
+        aligned = 0
     }
 
-    usize remaining = (*arena).capacity - aligned
-    if size > remaining {
-        return nil
-    }
-
-    (*arena).offset = aligned + size
-    return (*arena).buf + aligned
+    block.offset = aligned + size
+    return block.buf + aligned
 }

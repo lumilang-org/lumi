@@ -29,9 +29,9 @@ public sealed partial class Codegen
             DereferenceExpressionNode dereference => GenerateDereference(dereference),
             CastExpressionNode cast => GenerateCast(cast),
             SizeOfExpressionNode sizeOf => LLVMValueRef.CreateConstInt(
-                _usizeType, _dataLayout.ABISizeOfType(ResolveType(sizeOf.TargetType))),
+                _usizeType, _dataLayout.ABISizeOfType(ResolveType(_semanticModel.GetMangledName(sizeOf)))),
             AlignOfExpressionNode alignOf => LLVMValueRef.CreateConstInt(
-                _usizeType, _dataLayout.ABIAlignmentOfType(ResolveType(alignOf.TargetType))),
+                _usizeType, _dataLayout.ABIAlignmentOfType(ResolveType(_semanticModel.GetMangledName(alignOf)))),
             LiteralNode<char> character => LLVMValueRef.CreateConstInt(_context.Int8Type, character.Value),
             StringLiteralNode str => GenerateStringLiteral(str),
             // Pointers are opaque, so one null constant serves every pointer type.
@@ -137,7 +137,7 @@ public sealed partial class Codegen
     {
         var value = GenerateExpression(cast.Operand);
         var sourceType = _semanticModel.GetExpressionType(cast.Operand);
-        var targetType = cast.TargetType;
+        var targetType = _semanticModel.GetExpressionType(cast);
 
         // Pointers are opaque, so pointer <-> pointer and identity casts need no instruction.
         if (sourceType == targetType || PointerTypes.IsPointer(targetType) && IsPointerOrNil(sourceType))
@@ -289,7 +289,20 @@ public sealed partial class Codegen
 
             case MemberAccessNode member:
             {
-                var (basePtr, baseLumiType, _) = ResolveTargetAddress(member.Target);
+                LLVMValueRef basePtr;
+                string baseLumiType;
+
+                // p.field on a *Struct: the pointer's value is the struct's address.
+                var receiverType = _semanticModel.GetExpressionType(member.Target);
+                if (PointerTypes.IsPointer(receiverType))
+                {
+                    basePtr = GenerateExpression(member.Target);
+                    baseLumiType = PointerTypes.Pointee(receiverType);
+                }
+                else
+                {
+                    (basePtr, baseLumiType, _) = ResolveTargetAddress(member.Target);
+                }
 
                 if (!_structLayouts.TryGetValue(baseLumiType, out var layout))
                 {
