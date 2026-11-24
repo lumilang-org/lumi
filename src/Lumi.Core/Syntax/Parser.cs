@@ -884,6 +884,19 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
                 continue;
             }
 
+            // `expr as Type` binds tighter than any binary operator, but looser than a
+            // prefix operator: `*p as u64` is `(*p) as u64`.
+            if (Current.Type == TokenType.KeywordAs)
+            {
+                if (precedence >= Precedence.Cast)
+                {
+                    break;
+                }
+
+                leftExpr = ParseCast(leftExpr);
+                continue;
+            }
+
             if (Current.Type == TokenType.LBracket)
             {
                 if (precedence >= Precedence.Postfix)
@@ -911,6 +924,17 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         }
 
         return leftExpr;
+    }
+
+    private ExpressionNode ParseCast(ExpressionNode operand)
+    {
+        Consume(TokenType.KeywordAs);
+        var targetType = ParseTypeName();
+
+        return new CastExpressionNode(
+            operand,
+            targetType,
+            CreateSpan(operand.Span.Start, Peek(-1).Span.End));
     }
 
     private ExpressionNode ParseIndexExpression(ExpressionNode target)

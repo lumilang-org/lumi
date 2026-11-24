@@ -1049,4 +1049,55 @@ func main() -> void {
             Assert.That(CountCode(diagnostics, DiagnosticCodes.TypeMismatch), Is.GreaterThan(0), source);
         }
     }
+
+    [Test]
+    public void Check_Cast_ValidCasts()
+    {
+        var sources = new[]
+        {
+            "struct S { i32 a }\nfunc main() -> void { *u8 p = nil\n *u64 a = p as *u64\n *S b = p as *S\n *u8 c = b as *u8 }",
+            "func main() -> void { i64 a = 1\n i8 b = a as i8\n u32 c = b as u32\n usize d = c as usize\n i32 e = 1 as i32 }",
+            "func main() -> void { i32 x = 1\n *i32 p = &x\n usize a = p as usize\n *i32 q = a as *i32 }",
+            "func main() -> void { *i32 p = nil as *i32 }"
+        };
+
+        foreach (var source in sources)
+        {
+            var (_, _, diagnostics) = Check(source);
+
+            Assert.That(diagnostics.HasErrors, Is.False, source);
+        }
+    }
+
+    [Test]
+    public void Check_Cast_RecordsTargetType()
+    {
+        var (program, model, _) = Check("func main() -> void { *u8 p = nil\n *u64 a = p as *u64 }");
+
+        var cast = ((VariableDeclarationNode)program.Functions[0].Body[1]).Initializer!;
+        Assert.That(model.GetExpressionType(cast), Is.EqualTo("*u64"));
+    }
+
+    [Test]
+    public void Check_Cast_InvalidCasts()
+    {
+        var sources = new[]
+        {
+            "struct S { i32 a }\nfunc main() -> void { S s = S { a: 1 }\n i32 x = s as i32 }",
+            "func main() -> void { bool b = true\n *i32 p = b as *i32 }",
+            "func main() -> void { i32 a = 1\n *i32 p = a as *i32 }",
+            "func main() -> void { i32 x = 1\n *i32 p = &x\n i32 a = p as i32 }",
+            "func main() -> void { i32 a = 1\n bool b = a as bool }",
+            "func main() -> void { i32 a = 1\n string s = a as string }",
+            "func main() -> void { *i32 p = nil\n char c = 'a'\n *i32 q = c as *i32 }"
+        };
+
+        foreach (var source in sources)
+        {
+            var (_, _, diagnostics) = Check(source);
+
+            Assert.That(CountCode(diagnostics, DiagnosticCodes.TypeMismatch), Is.EqualTo(1), source);
+            Assert.That(diagnostics.Diagnostics.Any(d => d.Message.Contains("Cannot cast type")), Is.True, source);
+        }
+    }
 }

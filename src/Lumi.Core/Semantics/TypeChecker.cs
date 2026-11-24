@@ -612,6 +612,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             LiteralNode<char> _ => TypeConst.Char,
             StringLiteralNode _ => TypeConst.String,
             NilLiteralNode _ => TypeConst.Nil,
+            CastExpressionNode cast => CheckCast(cast, scope),
             LiteralNode<bool> _ => TypeConst.Bool,
             ArrayLiteralNode arrayLiteral => CheckArrayLiteral(arrayLiteral, scope, expectedType),
             IndexExpressionNode indexExpression => CheckIndexExpression(indexExpression, scope),
@@ -998,6 +999,36 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         }
 
         return PointerTypes.Pointee(operandType);
+    }
+
+    // expr as T. Allowed: identity, pointer <-> pointer, integer <-> integer and
+    // pointer <-> usize. Everything else (structs by value, bool, string...) is rejected.
+    private string CheckCast(CastExpressionNode cast, SymbolTable scope)
+    {
+        var sourceType = CheckExpression(cast.Operand, scope);
+        var targetType = cast.TargetType;
+        ValidateType(targetType, cast.Span);
+
+        if (sourceType == TypeConst.Error)
+        {
+            return targetType;
+        }
+
+        var allowed = sourceType == targetType
+                      || PointerTypes.IsPointer(sourceType) && PointerTypes.IsPointer(targetType)
+                      || TypePromoter.IsIntegerType(sourceType) && TypePromoter.IsIntegerType(targetType)
+                      || PointerTypes.IsPointer(sourceType) && targetType == TypeConst.Usize
+                      || sourceType == TypeConst.Usize && PointerTypes.IsPointer(targetType)
+                      || sourceType == TypeConst.Nil && PointerTypes.IsPointer(targetType);
+
+        if (!allowed)
+        {
+            Report(DiagnosticCodes.TypeMismatch,
+                $"Cannot cast type '{sourceType}' to '{targetType}'",
+                cast.Span);
+        }
+
+        return targetType;
     }
 
     private string ReportErrorAndReturn(string code, string message, SourceSpan? span)

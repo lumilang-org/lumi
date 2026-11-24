@@ -536,4 +536,62 @@ func main() -> void {
 
         Assert.That(program.Functions[0].Body[1], Is.InstanceOf<IfStatementNode>());
     }
+
+    [Test]
+    public void Parse_Cast_PostfixOnCallsAndMembers()
+    {
+        var program = Parse(@"
+struct S { i32 a }
+func f() -> *u8 { return nil }
+func main() -> void {
+    *u64 a = f() as *u64
+    *S b = f() as *S
+    *u8 c = b.a as *u8
+}");
+        var body = program.Functions[1].Body;
+
+        var first = ((VariableDeclarationNode)body[0]).Initializer as CastExpressionNode;
+        Assert.That(first, Is.Not.Null);
+        Assert.That(first!.TargetType, Is.EqualTo("*u64"));
+        Assert.That(first.Operand, Is.InstanceOf<FunctionCallExpressionNode>());
+
+        var second = (CastExpressionNode)((VariableDeclarationNode)body[1]).Initializer!;
+        Assert.That(second.TargetType, Is.EqualTo("*S"));
+
+        var third = (CastExpressionNode)((VariableDeclarationNode)body[2]).Initializer!;
+        Assert.That(third.Operand, Is.InstanceOf<MemberAccessNode>());
+    }
+
+    [Test]
+    public void Parse_Cast_DereferenceOfParenthesizedCast()
+    {
+        var program = Parse("func main() -> void { *u8 p = nil\n *(p as *u64) = 1000 }");
+
+        var assignment = (TargetAssignmentStatementNode)program.Functions[0].Body[1];
+        var target = (DereferenceExpressionNode)assignment.Target;
+        Assert.That(target.Operand, Is.InstanceOf<CastExpressionNode>());
+    }
+
+    [Test]
+    public void Parse_Cast_BindsLooserThanPrefixTighterThanBinary()
+    {
+        var program = Parse("func main() -> void { *i32 p = nil\n u64 a = *p as u64\n u64 b = a + 1 as u64 * 2 }");
+        var body = program.Functions[0].Body;
+
+        var deref = (CastExpressionNode)((VariableDeclarationNode)body[1]).Initializer!;
+        Assert.That(deref.Operand, Is.InstanceOf<DereferenceExpressionNode>());
+
+        var sum = (BinaryExpressionNode)((VariableDeclarationNode)body[2]).Initializer!;
+        Assert.That(sum.Right, Is.InstanceOf<BinaryExpressionNode>());
+        Assert.That(((BinaryExpressionNode)sum.Right).Left, Is.InstanceOf<CastExpressionNode>());
+    }
+
+    [Test]
+    public void Parse_Cast_Chains_AndAsIsNoLongerAnIdentifier()
+    {
+        var program = Parse("func main() -> void { u8 a = 1\n u64 b = a as u16 as u64 }");
+
+        var outer = (CastExpressionNode)((VariableDeclarationNode)program.Functions[0].Body[1]).Initializer!;
+        Assert.That(outer.Operand, Is.InstanceOf<CastExpressionNode>());
+    }
 }

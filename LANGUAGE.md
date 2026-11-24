@@ -210,6 +210,12 @@ counts[idx++]--  // idx is evaluated once
 
 ---
 
+### 6.4 Casts
+
+`expr as Type` converts explicitly. It binds tighter than any binary operator but looser than prefix operators, calls, `.` and `[]`: `*p as u64` is `(*p) as u64`, and `alloc(8) as *u64` needs no parentheses.
+
+Allowed: identity, pointer to any pointer (`*u8 as *Point`), integer to integer (truncates or sign/zero-extends by the source type), and pointer to/from `usize`. Everything else (structs by value, `bool`, `string`, float) is `LUMI1002`.
+
 ## 7. Control Flow
 
 ### 7.1 Conditionals (`if` / `else`)

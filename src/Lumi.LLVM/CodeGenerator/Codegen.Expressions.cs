@@ -27,6 +27,7 @@ public sealed partial class Codegen
             UpdateExpressionNode update => GenerateUpdate(update),
             AddressOfExpressionNode addressOf => ResolveTargetAddress(addressOf.Operand).Pointer,
             DereferenceExpressionNode dereference => GenerateDereference(dereference),
+            CastExpressionNode cast => GenerateCast(cast),
             LiteralNode<char> character => LLVMValueRef.CreateConstInt(_context.Int8Type, character.Value),
             StringLiteralNode str => GenerateStringLiteral(str),
             // Pointers are opaque, so one null constant serves every pointer type.
@@ -126,6 +127,31 @@ public sealed partial class Codegen
 
             _builder.BuildStore(elementValue, elementPtr);
         }
+    }
+
+    private LLVMValueRef GenerateCast(CastExpressionNode cast)
+    {
+        var value = GenerateExpression(cast.Operand);
+        var sourceType = _semanticModel.GetExpressionType(cast.Operand);
+        var targetType = cast.TargetType;
+
+        // Pointers are opaque, so pointer <-> pointer and identity casts need no instruction.
+        if (sourceType == targetType || PointerTypes.IsPointer(targetType) && IsPointerOrNil(sourceType))
+        {
+            return value;
+        }
+
+        if (PointerTypes.IsPointer(sourceType))
+        {
+            return _builder.BuildPtrToInt(value, ResolveType(targetType), "ptrtoint");
+        }
+
+        if (PointerTypes.IsPointer(targetType))
+        {
+            return _builder.BuildIntToPtr(value, ResolveType(targetType), "inttoptr");
+        }
+
+        return _llvmTypeHelper.ConvertInteger(value, sourceType, targetType);
     }
 
     private LLVMValueRef GenerateDereference(DereferenceExpressionNode dereference)
