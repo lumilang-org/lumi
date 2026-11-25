@@ -1,3 +1,4 @@
+using Lumi.Core.Ast.Expressions;
 using Lumi.Core.Ast;
 using Lumi.Core.Ast.Declarations;
 using Lumi.Core.Ast.Statements;
@@ -1424,5 +1425,104 @@ func main() -> void {
 
         var (_, _, wrongType) = Check("func main() -> void { i32[2] a = [1, 2]\n for x in a { bool b = x } }");
         Assert.That(CountCode(wrongType, DiagnosticCodes.TypeMismatch), Is.EqualTo(1));
+    }
+
+    private const string CounterStruct = @"
+struct Counter {
+    i32 value
+    func new(i32 start) -> Counter { return Counter { value: start } }
+    func bump(*Counter self, i32 by) -> void { self.value = self.value + by }
+    func get(Counter self) -> i32 { return self.value }
+    func twice(*Counter self) -> i32 {
+        self.bump(1)
+        self.bump(1)
+        return self.get()
+    }
+}
+";
+
+    [Test]
+    public void Check_StructFunctions_InstanceMethodsAndAssociatedFunctions()
+    {
+        var (program, model, diagnostics) = Check(CounterStruct + @"
+func main() -> void {
+    Counter c = Counter.new(1)
+    c.bump(2)
+    *Counter p = &c
+    p.bump(3)
+    i32 a = c.get()
+    i32 b = p.get()
+    i32 t = p.twice() + c.twice()
+}");
+
+        Assert.That(diagnostics.HasErrors, Is.False,
+            string.Join("\n", diagnostics.Diagnostics.Select(d => d.Message)));
+
+        var body = program.Functions[0].Body;
+        var bump = (MethodCallExpressionNode)((ExpressionStatementNode)body[1]).Expression;
+        Assert.That(model.GetMangledName(bump), Is.EqualTo("Counter__bump"));
+        Assert.That(model.GetReceiver(bump), Is.EqualTo(CallReceiver.AddressOf));
+
+        var viaPointer = (MethodCallExpressionNode)((ExpressionStatementNode)body[3]).Expression;
+        Assert.That(model.GetReceiver(viaPointer), Is.EqualTo(CallReceiver.Value));
+
+        var deref = (MethodCallExpressionNode)((VariableDeclarationNode)body[5]).Initializer!;
+        Assert.That(model.GetReceiver(deref), Is.EqualTo(CallReceiver.Dereference));
+
+        var assoc = (MethodCallExpressionNode)((VariableDeclarationNode)body[0]).Initializer!;
+        Assert.That(model.GetReceiver(assoc), Is.EqualTo(CallReceiver.None));
+        Assert.That(model.GetExpressionType(assoc), Is.EqualTo("Counter"));
+    }
+
+    [Test]
+    public void Check_StructFunctions_InvalidSelfAndCalls_ReportTypeMismatch()
+    {
+        foreach (var (source, message) in new[]
+                 {
+                     ("struct S { i32 a\n func f(i32 self) -> void { } }\nfunc main() -> void { }", "'self' in 'f' must have type"),
+                     ("struct S { i32 a }\nstruct T { i32 b\n func f(*S self) -> void { } }\nfunc main() -> void { }", "must have type"),
+                     ("struct S { i32 a\n func f(i32 x, *S self) -> void { } }\nfunc main() -> void { }", "must be the first parameter"),
+                     ("struct S { i32 a\n func f(*S self) -> void { } }\nfunc main() -> void { S.f() }", "is an instance method"),
+                     ("struct S { i32 a\n func make() -> S { return S { a: 1 } } }\nfunc main() -> void { S s = S.make()\n s.make() }", "is an associated function"),
+                     ("struct S { i32 a }\nfunc main() -> void { S s = S { a: 1 }\n s.nope() }", "has no function 'nope'"),
+                     ("func main() -> void { i32 x = 1\n x.nope() }", "is not a struct"),
+                     ("struct S { i32 a\n func f(*S self) -> void { } }\nfunc make() -> S { return S { a: 1 } }\nfunc main() -> void { make().f() }", "temporary"),
+                     ("struct S { i32 a\n func f(*S self, i32 n) -> void { } }\nfunc main() -> void { S s = S { a: 1 }\n s.f(true) }", "Argument 1")
+                 })
+        {
+            var (_, _, diagnostics) = Check(source);
+
+            Assert.That(CountCode(diagnostics, DiagnosticCodes.TypeMismatch), Is.EqualTo(1), source);
+            Assert.That(diagnostics.Diagnostics.Any(d => d.Message.Contains(message)), Is.True, source);
+        }
+
+        var (_, _, wrongCount) = Check(CounterStruct + "func main() -> void { Counter c = Counter.new(1)\n c.bump() }");
+        Assert.That(CountCode(wrongCount, DiagnosticCodes.ArgumentCountMismatch), Is.EqualTo(1));
+    }
+
+    [Test]
+    public void Check_StructFunctions_InsideModule_UseOneMangledName()
+    {
+        var (program, model, diagnostics) = Check(@"
+module std::mem
+struct Arena {
+    usize used
+    func new() -> Arena { return Arena { used: 0 } }
+    func take(*Arena self, usize n) -> usize {
+        self.used = self.used + n
+        return self.used
+    }
+}
+func use() -> usize {
+    Arena a = Arena.new()
+    return a.take(4)
+}");
+
+        Assert.That(diagnostics.HasErrors, Is.False,
+            string.Join("\n", diagnostics.Diagnostics.Select(d => d.Message)));
+        Assert.That(model.GetMangledName(program.Structs[0]), Is.EqualTo("std_mem_Arena"));
+        Assert.That(model.GetMangledName(program.Structs[0].Methods[1]), Is.EqualTo("std_mem_Arena__take"));
+        Assert.That(NameMangler.Method(NameMangler.Mangle("std::mem", "Arena"), "take"), Is.EqualTo("std_mem_Arena__take"));
+        Assert.That(NameMangler.Qualified("std::mem::Arena"), Is.EqualTo("std_mem_Arena"));
     }
 }

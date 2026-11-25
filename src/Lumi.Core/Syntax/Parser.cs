@@ -314,10 +314,17 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         Consume(TokenType.LBrace);
 
         var fields = new List<StructFieldNode>();
+        var methods = new List<FunctionDeclarationNode>();
 
         while (Current.Type != TokenType.RBrace &&
                Current.Type != TokenType.EndOfFile)
         {
+            if (Current.Type == TokenType.KeywordFunc)
+            {
+                methods.Add(ParseFunction());
+                continue;
+            }
+
             if (!IsTypeToken(Current.Type) &&
                 Current.Type != TokenType.Identifier &&
                 Current.Type != TokenType.Star)
@@ -357,6 +364,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         return new StructDeclarationNode(
             structName,
             fields,
+            methods,
             span);
     }
 
@@ -887,6 +895,14 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             if (Current.Type == TokenType.Dot)
             {
                 leftExpr = ParseMemberAccess(leftExpr);
+
+                // member( on the same line is a method call; on the next line it starts a statement.
+                if (Current.Type == TokenType.LParen &&
+                    Current.Span.Start.Line == Peek(-1).Span.End.Line)
+                {
+                    leftExpr = ParseMethodCall((MemberAccessNode)leftExpr);
+                }
+
                 continue;
             }
 
@@ -954,6 +970,33 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         return keyword.Type == TokenType.KeywordSizeOf
             ? new SizeOfExpressionNode(targetType, span)
             : new AlignOfExpressionNode(targetType, span);
+    }
+
+    private ExpressionNode ParseMethodCall(MemberAccessNode member)
+    {
+        Consume(TokenType.LParen);
+
+        var arguments = new List<ExpressionNode>();
+
+        while (Current.Type != TokenType.RParen && Current.Type != TokenType.EndOfFile)
+        {
+            arguments.Add(ParseExpression());
+
+            if (Current.Type != TokenType.Comma)
+            {
+                break;
+            }
+
+            Consume(TokenType.Comma);
+        }
+
+        var closingParen = Consume(TokenType.RParen);
+
+        return new MethodCallExpressionNode(
+            member.Target,
+            member.MemberName,
+            arguments,
+            CreateSpan(member.Span.Start, closingParen.Span.End));
     }
 
     private ExpressionNode ParseCast(ExpressionNode operand)
@@ -1343,8 +1386,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         var start = Current.Span.Start;
         var target = ParseExpression();
 
-        // `arr[0]++` / `p.x--` start like an assignment target but are plain statements.
-        if (target is UpdateExpressionNode)
+        // `arr[0]++` / `p.x--` / `a.method()` start like an assignment target but are plain statements.
+        if (target is UpdateExpressionNode or MethodCallExpressionNode && Current.Type != TokenType.Assign)
         {
             return new ExpressionStatementNode(target, target.Span);
         }

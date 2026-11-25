@@ -41,6 +41,7 @@ public sealed partial class Codegen
             ArrayLiteralNode arrayLiteral => GenerateArrayLiteral(arrayLiteral),
             IndexExpressionNode indexExpression => GenerateIndexExpression(indexExpression),
             FunctionCallExpressionNode functionCall => GenerateFunctionCall(functionCall),
+            MethodCallExpressionNode methodCall => GenerateMethodCall(methodCall),
             MemberAccessNode member => GenerateMemberAccess(member),
             _ => throw new Exception("Unknown IR generation node target.")
         };
@@ -232,6 +233,58 @@ public sealed partial class Codegen
             functionInfo.FunctionType,
             functionInfo.Function,
             arguments,
+            name);
+    }
+
+    // receiver.method(args) / Struct.function(args): a plain call to <Struct>__method with the
+    // receiver, adjusted to the type of `self`, as the first argument.
+    private LLVMValueRef GenerateMethodCall(MethodCallExpressionNode call)
+    {
+        var mangledName = _semanticModel.GetMangledName(call);
+        var functionInfo = _functions[mangledName];
+        _semanticModel.Functions.TryGet(mangledName, out var signature);
+
+        var receiver = _semanticModel.GetReceiver(call);
+        var arguments = new List<LLVMValueRef>();
+
+        switch (receiver)
+        {
+            case CallReceiver.Value:
+                arguments.Add(GenerateExpression(call.Target));
+                break;
+            case CallReceiver.AddressOf:
+                arguments.Add(ResolveTargetAddress(call.Target).Pointer);
+                break;
+            case CallReceiver.Dereference:
+                var structType = signature!.ParameterTypes[0];
+                arguments.Add(_builder.BuildLoad2(
+                    ResolveType(structType),
+                    GenerateExpression(call.Target),
+                    "self"));
+                break;
+        }
+
+        var offset = arguments.Count;
+        for (var i = 0; i < call.Arguments.Count; i++)
+        {
+            var targetTypeName = signature!.ParameterTypes[i + offset];
+
+            arguments.Add(CastInitializer(
+                GenerateExpression(call.Arguments[i]),
+                call.Arguments[i],
+                ResolveType(targetTypeName),
+                targetTypeName,
+                $"arg_{i}"));
+        }
+
+        var name = functionInfo.FunctionType.ReturnType.Kind == LLVMTypeKind.LLVMVoidTypeKind
+            ? string.Empty
+            : "calltmp";
+
+        return _builder.BuildCall2(
+            functionInfo.FunctionType,
+            functionInfo.Function,
+            arguments.ToArray(),
             name);
     }
 

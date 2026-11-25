@@ -9,6 +9,7 @@ public sealed class SemanticModel
     private readonly Dictionary<ASTNode, string> _mangledNames = new();
     private readonly Dictionary<ASTNode, string> _nodeTypes = new();
     private readonly HashSet<ASTNode> _builtinCalls = new();
+    private readonly Dictionary<ASTNode, CallReceiver> _receivers = new();
     public FunctionRegistry Functions { get; } = new();
 
     public void MarkBuiltinCall(FunctionCallExpressionNode call)
@@ -35,6 +36,16 @@ public sealed class SemanticModel
 
         throw new Exception(
             $"Semantic Error: No resolved type exists for node '{node.GetType().Name}'.");
+    }
+
+    public void SetReceiver(MethodCallExpressionNode call, CallReceiver receiver)
+    {
+        _receivers[call] = receiver;
+    }
+
+    public CallReceiver GetReceiver(MethodCallExpressionNode call)
+    {
+        return _receivers[call];
     }
 
     public void SetMangledName(ASTNode node, string mangledName)

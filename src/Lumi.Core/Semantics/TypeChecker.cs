@@ -15,6 +15,9 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
     private readonly ReturnAnalyzer _returnAnalyzer = new();
     private readonly Dictionary<string, StructDeclarationNode> _structs = new();
 
+    // Mangled names of struct functions whose first parameter is a valid `self`.
+    private readonly HashSet<string> _instanceMethods = new();
+
     private string _currentFile = "<unknown>";
     private IReadOnlyList<ImportDeclarationNode> _currentImports = [];
     private string _currentModulePrefix = "";
@@ -59,6 +62,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
     public void CheckCompilationUnit(IReadOnlyList<ProgramNode> modules)
     {
         _structs.Clear();
+        _instanceMethods.Clear();
         Functions.Clear();
 
         // Register all structs (mangled) across all modules
@@ -104,6 +108,16 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
                 SemanticModel.SetType(func, ResolveType(func.ReturnType));
                 SemanticModel.SetMangledName(func, mangledName);
+            }
+
+            foreach (var structDecl in module.Structs)
+            {
+                var structName = SemanticModel.GetMangledName(structDecl);
+
+                foreach (var method in structDecl.Methods)
+                {
+                    RegisterMethod(structName, method);
+                }
             }
 
             foreach (var externFunc in module.ExternFunctions)
@@ -158,16 +172,77 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                 }
             }
 
-            foreach (var func in module.Functions)
+            foreach (var func in module.AllFunctions)
             {
                 CheckFunction(func);
             }
         }
     }
 
-    private string MangleName(string prefix, string name)
+    // A function declared inside a struct is registered as <Struct>__<name>. `self` must be the
+    // first parameter, typed S or *S; a function without it is an associated function.
+    private void RegisterMethod(string structName, FunctionDeclarationNode method)
     {
-        return string.IsNullOrEmpty(prefix) ? name : $"{prefix.Replace("::", "_")}_{name}";
+        var mangledName = NameMangler.Method(structName, method.Name);
+        var isInstance = false;
+
+        for (var i = 0; i < method.Parameters.Count; i++)
+        {
+            var parameter = method.Parameters[i];
+            if (parameter.Name != "self")
+            {
+                continue;
+            }
+
+            var selfType = ResolveType(parameter.Type);
+            if (i > 0)
+            {
+                Report(DiagnosticCodes.TypeMismatch,
+                    $"'self' must be the first parameter of '{method.Name}'.",
+                    parameter.Span);
+            }
+            else if (selfType != structName && selfType != PointerTypes.To(structName))
+            {
+                Report(DiagnosticCodes.TypeMismatch,
+                    $"'self' in '{method.Name}' must have type '{StructDisplayName(structName)}' " +
+                    $"or '*{StructDisplayName(structName)}', but has type '{parameter.Type}'.",
+                    parameter.Span);
+            }
+            else
+            {
+                isInstance = true;
+            }
+        }
+
+        var signature = new FunctionSignature(
+            mangledName,
+            method.Parameters.Select(p => ResolveType(p.Type)).ToArray(),
+            ResolveType(method.ReturnType));
+
+        if (!Functions.TryRegister(signature))
+        {
+            Report(DiagnosticCodes.DuplicateFunction,
+                $"Function '{mangledName}' is already declared.",
+                method.Span);
+        }
+
+        if (isInstance)
+        {
+            _instanceMethods.Add(mangledName);
+        }
+
+        SemanticModel.SetType(method, signature.ReturnType);
+        SemanticModel.SetMangledName(method, mangledName);
+    }
+
+    private string StructDisplayName(string mangledName)
+    {
+        return _structs.TryGetValue(mangledName, out var structDecl) ? structDecl.Name : mangledName;
+    }
+
+    private static string MangleName(string prefix, string name)
+    {
+        return NameMangler.Mangle(prefix, name);
     }
 
     private string ResolveSymbolName(string name)
@@ -195,7 +270,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                     import.PathSegments.Last() == parts[0])
                 {
                     // This is simplified. Let's try to just mangle the whole name and see if it hits.
-                    var mangled = name.Replace("::", "_");
+                    var mangled = NameMangler.Qualified(name);
                     if (Functions.Contains(mangled) || _structs.ContainsKey(mangled))
                     {
                         return mangled;
@@ -221,7 +296,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         }
 
         // Fallback to unmangled (for built-ins or main)
-        return name.Replace("::", "_");
+        return NameMangler.Qualified(name);
     }
 
     public void CheckProgram(ProgramNode program)
@@ -698,6 +773,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             StringLiteralNode _ => TypeConst.String,
             NilLiteralNode _ => TypeConst.Nil,
             CastExpressionNode cast => CheckCast(cast, scope),
+            MethodCallExpressionNode methodCall => CheckMethodCall(methodCall, scope),
             SizeOfExpressionNode sizeOf => CheckTypeIntrinsic(sizeOf, sizeOf.TargetType),
             AlignOfExpressionNode alignOf => CheckTypeIntrinsic(alignOf, alignOf.TargetType),
             LiteralNode<bool> _ => TypeConst.Bool,
@@ -869,50 +945,150 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
         SemanticModel.SetMangledName(functionCall, resolvedName);
 
-        if (functionCall.Arguments.Count != signature.ParameterTypes.Count)
-        {
-            var errorMessage = $"Function '{functionCall.Name}' expects " +
-                               $"{signature.ParameterTypes.Count} arguments, " +
-                               $"but received {functionCall.Arguments.Count}.";
+        CheckCallArguments(functionCall.Name, signature, 0, functionCall.Arguments, scope, functionCall.Span);
 
+        return signature.ReturnType;
+    }
+
+    // Checks call arguments against the signature, skipping `skip` leading parameters that
+    // the call supplies itself (the receiver of a method call).
+    private void CheckCallArguments(
+        string name,
+        FunctionSignature signature,
+        int skip,
+        IReadOnlyList<ExpressionNode> arguments,
+        SymbolTable scope,
+        SourceSpan? span)
+    {
+        var expectedCount = signature.ParameterTypes.Count - skip;
+
+        if (arguments.Count != expectedCount)
+        {
             Report(DiagnosticCodes.ArgumentCountMismatch,
-                errorMessage,
-                functionCall.Span);
+                $"Function '{name}' expects {expectedCount} arguments, but received {arguments.Count}.",
+                span);
         }
 
-        for (var i = 0; i < functionCall.Arguments.Count; i++)
+        for (var i = 0; i < arguments.Count; i++)
         {
-            var argument = functionCall.Arguments[i];
+            var argument = arguments[i];
 
             // Surplus arguments were already reported above; still check them on their own.
-            if (i >= signature.ParameterTypes.Count)
+            if (i >= expectedCount)
             {
                 CheckExpression(argument, scope);
                 continue;
             }
 
-            var expectedType = signature.ParameterTypes[i];
-
-            var actualType = CheckExpression(
-                argument,
-                scope,
-                expectedType);
-
+            var expectedType = signature.ParameterTypes[i + skip];
+            var actualType = CheckExpression(argument, scope, expectedType);
             SemanticModel.SetExpressionType(argument, actualType);
 
             if (!CanAssign(expectedType, actualType, argument))
             {
-                var errorMessage = $"Type Mismatch: Argument {i + 1} of function " +
-                                   $"'{functionCall.Name}' expects '{expectedType}', " +
-                                   $"but got '{actualType}'.";
-
                 Report(DiagnosticCodes.TypeMismatch,
-                    errorMessage,
-                    functionCall.Span);
+                    $"Type Mismatch: Argument {i + 1} of function '{name}' expects '{expectedType}', " +
+                    $"but got '{actualType}'.",
+                    span);
+            }
+        }
+    }
+
+    // receiver.method(args) calls <Struct>__method with the receiver as `self`;
+    // Struct.function(args) calls an associated function without one.
+    private string CheckMethodCall(MethodCallExpressionNode call, SymbolTable scope)
+    {
+        string structName;
+        var receiverType = TypeConst.Error;
+        var isAssociatedCall = false;
+
+        if (call.Target is IdentifierNode typeName
+            && !scope.TryLookup(typeName.Name, out _)
+            && _structs.ContainsKey(ResolveSymbolName(typeName.Name)))
+        {
+            structName = ResolveSymbolName(typeName.Name);
+            isAssociatedCall = true;
+        }
+        else
+        {
+            receiverType = CheckExpression(call.Target, scope);
+            structName = PointerTypes.IsPointer(receiverType) ? PointerTypes.Pointee(receiverType) : receiverType;
+        }
+
+        var mangledName = NameMangler.Method(structName, call.MethodName);
+
+        if (receiverType == TypeConst.Error && !isAssociatedCall)
+        {
+            return CheckArgumentsOnly(call, scope);
+        }
+
+        if (!_structs.ContainsKey(structName) || !Functions.TryGet(mangledName, out var signature))
+        {
+            Report(DiagnosticCodes.TypeMismatch,
+                _structs.ContainsKey(structName)
+                    ? $"Struct '{StructDisplayName(structName)}' has no function '{call.MethodName}'."
+                    : $"Type '{receiverType}' is not a struct and has no method '{call.MethodName}'.",
+                call.Span);
+            return CheckArgumentsOnly(call, scope);
+        }
+
+        var isInstance = _instanceMethods.Contains(mangledName);
+        var displayName = $"{StructDisplayName(structName)}.{call.MethodName}";
+
+        if (isAssociatedCall == isInstance)
+        {
+            Report(DiagnosticCodes.TypeMismatch,
+                isInstance
+                    ? $"'{displayName}' is an instance method; call it on a value of type '{StructDisplayName(structName)}'."
+                    : $"'{displayName}' is an associated function; call it as '{StructDisplayName(structName)}.{call.MethodName}(...)'.",
+                call.Span);
+            return CheckArgumentsOnly(call, scope);
+        }
+
+        SemanticModel.SetMangledName(call, mangledName);
+
+        if (isAssociatedCall)
+        {
+            SemanticModel.SetReceiver(call, CallReceiver.None);
+        }
+        else
+        {
+            var selfType = signature.ParameterTypes[0];
+
+            if (receiverType == selfType)
+            {
+                SemanticModel.SetReceiver(call, CallReceiver.Value);
+            }
+            else if (selfType == PointerTypes.To(receiverType))
+            {
+                if (!IsAddressable(call.Target))
+                {
+                    Report(DiagnosticCodes.TypeMismatch,
+                        $"Cannot call '{displayName}' on a temporary value; its 'self' needs an address.",
+                        call.Target.Span);
+                }
+
+                SemanticModel.SetReceiver(call, CallReceiver.AddressOf);
+            }
+            else
+            {
+                SemanticModel.SetReceiver(call, CallReceiver.Dereference);
             }
         }
 
+        CheckCallArguments(displayName, signature, isAssociatedCall ? 0 : 1, call.Arguments, scope, call.Span);
+
         return signature.ReturnType;
+    }
+
+    private string CheckArgumentsOnly(MethodCallExpressionNode call, SymbolTable scope)
+    {
+        foreach (var argument in call.Arguments)
+        {
+            CheckExpression(argument, scope);
+        }
+
+        return TypeConst.Error;
     }
 
     // len(string) -> i32. A user-declared 'len' takes precedence over this builtin.

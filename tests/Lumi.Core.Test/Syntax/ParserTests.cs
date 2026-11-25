@@ -689,4 +689,47 @@ func main() -> void {
 
         Assert.That(diagnostics.HasErrors, Is.True);
     }
+
+    [Test]
+    public void Parse_StructWithNestedFunctions_KeepsFieldsAndMethodsApart()
+    {
+        var program = Parse(@"
+struct Counter {
+    i32 value
+    func new(i32 start) -> Counter { return Counter { value: start } }
+    i32 step
+    func bump(*Counter self) -> void { self.value = self.value + self.step }
+}
+func main() -> void {
+    Counter c = Counter.new(1)
+    c.bump()
+    (&c).bump()
+    c.bump(
+    )
+}");
+        var counter = program.Structs[0];
+
+        Assert.That(counter.Fields.Select(f => f.Name), Is.EqualTo(new[] { "value", "step" }));
+        Assert.That(counter.Methods.Select(m => m.Name), Is.EqualTo(new[] { "new", "bump" }));
+        Assert.That(program.Functions, Has.Count.EqualTo(1));
+        Assert.That(program.AllFunctions.Count(), Is.EqualTo(3));
+
+        var body = program.Functions[0].Body;
+        var assoc = (MethodCallExpressionNode)((VariableDeclarationNode)body[0]).Initializer!;
+        Assert.That(assoc.MethodName, Is.EqualTo("new"));
+        Assert.That(assoc.Target, Is.InstanceOf<IdentifierNode>());
+        Assert.That(assoc.Arguments, Has.Count.EqualTo(1));
+
+        var statement = (ExpressionStatementNode)body[1];
+        Assert.That(statement.Expression, Is.InstanceOf<MethodCallExpressionNode>());
+        Assert.That(((ExpressionStatementNode)body[2]).Expression, Is.InstanceOf<MethodCallExpressionNode>());
+    }
+
+    [Test]
+    public void Parse_MemberAccess_IsNotAMethodCallWhenParenIsOnTheNextLine()
+    {
+        var program = Parse("struct S { i32 a }\nfunc main() -> void { S s = S { a: 1 }\n i32 x = s.a\n (*(&s)).a = 2 }");
+
+        Assert.That(((VariableDeclarationNode)program.Functions[0].Body[1]).Initializer, Is.InstanceOf<MemberAccessNode>());
+    }
 }

@@ -35,7 +35,7 @@ public sealed partial class Codegen
         }
 
         // Try mangled name
-        var mangled = typeName.Replace("::", "_");
+        var mangled = NameMangler.Qualified(typeName);
         if (_structLayouts.TryGetValue(mangled, out structLayout))
         {
             return structLayout.StructType;

@@ -14,6 +14,22 @@ struct Arena {
     *ArenaBlock head
     *ArenaBlock current
     usize block_capacity
+
+    func init(*Arena self, usize initial_capacity) -> bool {
+        return arena_init(self, initial_capacity)
+    }
+
+    func alloc(*Arena self, usize size, usize align) -> *u8 {
+        return arena_alloc(self, size, align)
+    }
+
+    func reset(*Arena self) -> void {
+        arena_reset(self)
+    }
+
+    func destroy(*Arena self) -> void {
+        arena_destroy(self)
+    }
 }
 
 func arena_block_new(usize cap) -> *ArenaBlock {

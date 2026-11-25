@@ -17,4 +17,8 @@ public sealed class ProgramNode(
     public IReadOnlyList<FunctionDeclarationNode> Functions { get; } = functions;
     public IReadOnlyList<StructDeclarationNode> Structs { get; } = structs;
     public IReadOnlyList<ExternFunctionDeclarationNode> ExternFunctions { get; } = externFunctions;
+
+    // Module-level functions followed by the functions nested in structs.
+    public IEnumerable<FunctionDeclarationNode> AllFunctions =>
+        Functions.Concat(Structs.SelectMany(structDecl => structDecl.Methods));
 }

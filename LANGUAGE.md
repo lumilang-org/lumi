@@ -121,6 +121,27 @@ Lexical scoping applies to all variables declared inside blocks (`{ ... }`), `if
 
 ---
 
+### 2.3.1 Functions inside structs
+
+A `func` can be declared inside a struct body next to the fields. It does not change the struct's size or layout.
+
+```
+struct Counter {
+    i32 value
+
+    func new(i32 start) -> Counter { return Counter { value: start } }   // associated function
+    func bump(*Counter self, i32 by) -> void { self.value = self.value + by }   // instance method
+}
+
+Counter c = Counter.new(1)
+c.bump(2)
+```
+
+- A first parameter named `self` of type `S` or `*S` makes an instance method, called as `value.method(args)`. Anything else named `self` (wrong type, or not first) is `LUMI1002`.
+- Without `self` it is an associated function, called as `Struct.function(args)`.
+- The receiver adapts to `self`: a struct variable passed to `*S self` has its address taken (it must be addressable, so not a temporary), and a `*S` passed to `S self` is dereferenced.
+- Each function is emitted as `<MangledStruct>__<name>`, e.g. `std_mem_Arena__reset`.
+
 ## 4. Struct Literals & Member Access
 
 ### 4.1 Struct Literals

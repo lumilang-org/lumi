@@ -90,7 +90,7 @@ public sealed partial class Codegen
                     (function, functionType));
             }
 
-            foreach (var funcNode in module.Functions)
+            foreach (var funcNode in module.AllFunctions)
             {
                 var mangledName = _semanticModel.GetMangledName(funcNode);
                 var resolvedReturnType = _semanticModel.GetType(funcNode);
@@ -116,7 +116,7 @@ public sealed partial class Codegen
 
         foreach (var module in modules)
         {
-            foreach (var funcNode in module.Functions)
+            foreach (var funcNode in module.AllFunctions)
             {
                 var mangledName = _semanticModel.GetMangledName(funcNode);
                 var function = _functions[mangledName].Function;
