@@ -418,6 +418,12 @@ public sealed partial class Codegen
     {
         var function = _builder.InsertBlock.Parent;
         var subjectTypeName = _semanticModel.GetExpressionType(switchStmt.Subject);
+        if (_enumLayouts.ContainsKey(subjectTypeName))
+        {
+            GenerateEnumSwitch(switchStmt, subjectTypeName);
+            return;
+        }
+
         var subject = GenerateExpression(switchStmt.Subject);
         var subjectType = subject.TypeOf;
 

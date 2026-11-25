@@ -57,8 +57,15 @@ public sealed partial class Codegen
     {
         foreach (var module in modules)
         {
+            DeclareEnums(module);
+        }
+
+        foreach (var module in modules)
+        {
             RegisterStructs(module);
         }
+
+        DefineEnums();
 
         // Declare every function in the LLVM module.
         foreach (var module in modules)

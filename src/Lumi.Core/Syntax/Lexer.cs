@@ -9,6 +9,7 @@ public sealed class Lexer
     {
         { TypeConst.Print, TokenType.PrintFunc },
         { TypeConst.Println, TokenType.PrintFunc },
+        { TypeConst.Enum, TokenType.KeywordEnum },
         { TypeConst.Pub, TokenType.KeywordPub },
         { TypeConst.Switch, TokenType.KeywordSwitch },
         { TypeConst.Default, TokenType.KeywordDefault },

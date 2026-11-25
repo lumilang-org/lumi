@@ -5,6 +5,9 @@ namespace Lumi.Core.Semantics;
 
 public sealed class ReturnAnalyzer
 {
+    // True for an enum switch that covers every variant without a `default` arm.
+    public Func<SwitchStatementNode, bool> IsExhaustive { get; set; } = _ => false;
+
     public bool AlwaysReturns(IReadOnlyList<StatementNode> statements)
     {
         foreach (var statement in statements)
@@ -30,8 +33,9 @@ public sealed class ReturnAnalyzer
                 AlwaysReturns(ifStatement.ElseBody),
 
             SwitchStatementNode switchStatement =>
-                switchStatement.DefaultBody is not null &&
-                AlwaysReturns(switchStatement.DefaultBody) &&
+                (switchStatement.DefaultBody is null
+                    ? IsExhaustive(switchStatement)
+                    : AlwaysReturns(switchStatement.DefaultBody)) &&
                 switchStatement.Arms.All(arm => AlwaysReturns(arm.Body)),
 
             _ => false

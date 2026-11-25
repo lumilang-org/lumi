@@ -67,4 +67,5 @@ public static class TypeConst
     public const string Error = "<error>";
     public const string Print = "print";
     public const string Println = "println";
+    public const string Enum = "enum";
 }

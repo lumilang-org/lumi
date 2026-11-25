@@ -29,6 +29,11 @@ public sealed partial class Codegen
             return LLVMTypeRef.CreatePointer(_context.Int8Type, 0);
         }
 
+        if (_enumLayouts.TryGetValue(typeName, out var enumLayout))
+        {
+            return enumLayout.Type;
+        }
+
         if (_structLayouts.TryGetValue(typeName, out var structLayout))
         {
             return structLayout.StructType;

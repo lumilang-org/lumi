@@ -37,6 +37,11 @@ public sealed partial class Codegen
             // Pointers are opaque, so one null constant serves every pointer type.
             NilLiteralNode => LLVMValueRef.CreateConstPointerNull(ResolveType(PointerTypes.To(TypeConst.U8))),
             LiteralNode<bool> boolean => LLVMValueRef.CreateConstInt(_context.Int1Type, (ulong)(boolean.Value ? 1 : 0)),
+            EnumStructLiteralNode enumLiteral => GenerateEnumStructConstruction(enumLiteral),
+            MethodCallExpressionNode { } enumCall when _semanticModel.IsEnumConstruction(enumCall) =>
+                GenerateEnumConstruction(enumCall, enumCall.MethodName, enumCall.Arguments),
+            MemberAccessNode enumUnit when _semanticModel.IsEnumConstruction(enumUnit) =>
+                GenerateEnumConstruction(enumUnit, enumUnit.MemberName, []),
             StructLiteralNode structLiteral => GenerateStructLiteral(structLiteral),
             ArrayLiteralNode arrayLiteral => GenerateArrayLiteral(arrayLiteral),
             IndexExpressionNode indexExpression => GenerateIndexExpression(indexExpression),

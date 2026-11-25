@@ -10,7 +10,25 @@ public sealed class SemanticModel
     private readonly Dictionary<ASTNode, string> _nodeTypes = new();
     private readonly HashSet<ASTNode> _builtinCalls = new();
     private readonly Dictionary<ASTNode, CallReceiver> _receivers = new();
+    private readonly HashSet<ASTNode> _enumConstructions = new();
+    private readonly HashSet<ASTNode> _exhaustiveSwitches = new();
     public FunctionRegistry Functions { get; } = new();
+
+    public void MarkExhaustiveSwitch(ASTNode node) => _exhaustiveSwitches.Add(node);
+
+    public bool IsExhaustiveSwitch(ASTNode node) => _exhaustiveSwitches.Contains(node);
+
+    // Marks a MemberAccess / MethodCall / EnumStructLiteral that builds an enum variant;
+    // its mangled name is the enum's.
+    public void MarkEnumConstruction(ASTNode node)
+    {
+        _enumConstructions.Add(node);
+    }
+
+    public bool IsEnumConstruction(ASTNode node)
+    {
+        return _enumConstructions.Contains(node);
+    }
 
     public void MarkBuiltinCall(FunctionCallExpressionNode call)
     {

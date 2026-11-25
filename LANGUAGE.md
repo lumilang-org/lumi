@@ -157,6 +157,30 @@ switch score {
 - An arm is one statement or a block with its own scope. There is no fall-through: after an arm the program continues after the `switch`. `break` leaves the `switch`; `continue` applies to the enclosing loop.
 - A `switch` with a `default` where every arm returns counts as returning.
 
+### 2.4 Enums
+
+```
+pub enum Message {
+    Quit,                    // unit variant
+    Key(i32),                // tuple variant
+    Move { x: i32, y: i32 }, // struct variant
+}
+
+Message m = Message.Move { x: 1, y: 2 }
+switch m {
+    Message.Quit => println(0)
+    Message.Key(k) => println(k)
+    Message.Move { x, y } => println(x + y)
+}
+```
+
+Struct patterns bind every field by its own name: `Message.Move { x, y }` declares locals `x` and `y`. Renaming (`x: a`) and `_` are not allowed in struct patterns; construction still uses `field: value`.
+
+- Variants are built with `Enum.Unit`, `Enum.Tuple(args)` and `Enum.Struct { field: value }`; counts and types are checked.
+- Enums are private to their module unless `pub`; their variants follow the enum.
+- A `switch` on an enum matches variants. Payload patterns name a new variable per field (`_` ignores one); struct patterns must list every field. An arm with several patterns cannot bind. Without `default`, every variant must be covered (`LUMI1018`); a repeated variant is `LUMI1017`.
+- Layout: `{ i32 tag, payload }` where the payload is as large and as aligned as the biggest variant, so `sizeof`/`alignof` work and enums can be fields, parameters and return values.
+
 ### 2.3.2 Visibility (`pub`)
 
 Everything is private to its module unless marked `pub`: top-level `func`, `extern func` and `struct`,

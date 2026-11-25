@@ -16,6 +16,8 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
     private readonly Dictionary<string, string> _moduleContexts = new();
     private readonly ReturnAnalyzer _returnAnalyzer = new();
     private readonly Dictionary<string, StructDeclarationNode> _structs = new();
+    private readonly Dictionary<string, EnumDeclarationNode> _enums = new();
+    private readonly Dictionary<string, string> _enumModules = new();
 
     // Defining module prefix of every struct and function, by mangled name ("" = no module).
     private readonly Dictionary<string, string> _functionModules = new();
@@ -65,7 +67,10 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
     public void CheckCompilationUnit(IReadOnlyList<ProgramNode> modules)
     {
+        _returnAnalyzer.IsExhaustive = SemanticModel.IsExhaustiveSwitch;
         _structs.Clear();
+        _enums.Clear();
+        _enumModules.Clear();
         _structModules.Clear();
         _functionModules.Clear();
         _instanceMethods.Clear();
@@ -88,6 +93,48 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
                 _structModules[mangledName] = modulePrefix;
                 SemanticModel.SetMangledName(structDecl, mangledName);
+            }
+        }
+
+        // Register all enums (mangled) across all modules
+        foreach (var module in modules)
+        {
+            var modulePrefix = module.Module != null ? string.Join("::", module.Module.PathSegments) : "";
+            _currentFile = module.FileName;
+
+            foreach (var enumDecl in module.Enums)
+            {
+                var mangledName = MangleName(modulePrefix, enumDecl.Name);
+                if (_structs.ContainsKey(mangledName) || !_enums.TryAdd(mangledName, enumDecl))
+                {
+                    Report(DiagnosticCodes.TypeMismatch, $"Type '{mangledName}' is already declared.",
+                        enumDecl.Span);
+                }
+
+                _enumModules[mangledName] = modulePrefix;
+                SemanticModel.SetMangledName(enumDecl, mangledName);
+
+                var variantNames = new HashSet<string>();
+                foreach (var variant in enumDecl.Variants)
+                {
+                    if (!variantNames.Add(variant.Name))
+                    {
+                        Report(DiagnosticCodes.TypeMismatch,
+                            $"Enum '{enumDecl.Name}' already has a variant named '{variant.Name}'.",
+                            variant.Span);
+                    }
+
+                    var fieldNames = new HashSet<string>();
+                    foreach (var field in variant.Fields)
+                    {
+                        if (field.Name is not null && !fieldNames.Add(field.Name))
+                        {
+                            Report(DiagnosticCodes.TypeMismatch,
+                                $"Variant '{variant.Name}' of enum '{enumDecl.Name}' already has a field named '{field.Name}'.",
+                                field.Span);
+                        }
+                    }
+                }
             }
         }
 
@@ -167,6 +214,26 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
                 SemanticModel.SetType(externFunc, resolvedReturn);
                 SemanticModel.SetMangledName(externFunc, mangledName);
+            }
+        }
+
+        // Resolve variant payload types before any function body uses them.
+        foreach (var module in modules)
+        {
+            _currentFile = module.FileName;
+            _currentModulePrefix = module.Module != null ? string.Join("::", module.Module.PathSegments) : "";
+            _currentImports = module.Imports;
+
+            foreach (var enumDecl in module.Enums)
+            {
+                foreach (var variant in enumDecl.Variants)
+                {
+                    foreach (var field in variant.Fields)
+                    {
+                        ValidateType(field.Type, field.Span);
+                        SemanticModel.SetType(field, ResolveType(field.Type));
+                    }
+                }
             }
         }
 
@@ -251,6 +318,39 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         SemanticModel.SetMangledName(method, mangledName);
     }
 
+    private bool SymbolExists(string mangled)
+    {
+        return Functions.Contains(mangled) || _structs.ContainsKey(mangled) || _enums.ContainsKey(mangled);
+    }
+
+    private void RequireEnumVisible(string enumName, SourceSpan? span)
+    {
+        if (_enums.TryGetValue(enumName, out var decl)
+            && !IsAccessible(_enumModules.GetValueOrDefault(enumName), decl.VisibilityModifier))
+        {
+            Report(DiagnosticCodes.PrivateAccess,
+                $"Enum '{decl.Name}' is private to {ModuleDisplay(_enumModules.GetValueOrDefault(enumName))}.",
+                span);
+        }
+    }
+
+    // `Name` in `Name.Variant` names an enum when no variable shadows it.
+    private bool TryResolveEnumTarget(ExpressionNode target, SymbolTable scope, out string enumName)
+    {
+        enumName = "";
+        if (target is IdentifierNode id && !scope.TryLookup(id.Name, out _))
+        {
+            var resolved = ResolveSymbolName(id.Name);
+            if (_enums.ContainsKey(resolved))
+            {
+                enumName = resolved;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private bool IsAccessible(string? owningModule, VisibilityModifier visibility)
     {
         return visibility == VisibilityModifier.Public || (owningModule ?? "") == _currentModulePrefix;
@@ -297,7 +397,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
     {
         // Try local module
         var localMangled = MangleName(_currentModulePrefix, name);
-        if (Functions.Contains(localMangled) || _structs.ContainsKey(localMangled))
+        if (SymbolExists(localMangled))
         {
             return localMangled;
         }
@@ -319,7 +419,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                 {
                     // This is simplified. Let's try to just mangle the whole name and see if it hits.
                     var mangled = NameMangler.Qualified(name);
-                    if (Functions.Contains(mangled) || _structs.ContainsKey(mangled))
+                    if (SymbolExists(mangled))
                     {
                         return mangled;
                     }
@@ -328,7 +428,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                     if (import.PathSegments.Last() == parts[0] && import.PathSegments.Count > 1)
                     {
                         var fullMangled = string.Join("_", import.PathSegments) + "_" + string.Join("_", parts.Skip(1));
-                        if (Functions.Contains(fullMangled) || _structs.ContainsKey(fullMangled))
+                        if (SymbolExists(fullMangled))
                         {
                             return fullMangled;
                         }
@@ -337,7 +437,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             }
 
             var mangledSimple = MangleName(importPrefix, name);
-            if (Functions.Contains(mangledSimple) || _structs.ContainsKey(mangledSimple))
+            if (SymbolExists(mangledSimple))
             {
                 return mangledSimple;
             }
@@ -791,6 +891,12 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         var subjectType = CheckExpression(node.Subject, scope);
         EnsureValueExpression(node.Subject, subjectType);
 
+        if (_enums.ContainsKey(subjectType))
+        {
+            CheckEnumSwitch(node, scope, expectedReturnType, subjectType);
+            return;
+        }
+
         var supported = subjectType == TypeConst.Error
                         || TypePromoter.IsIntegerType(subjectType)
                         || subjectType == TypeConst.Bool
@@ -882,6 +988,387 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         }
     }
 
+    private EnumVariantNode? FindVariant(string enumName, string variantName)
+    {
+        return _enums[enumName].Variants.FirstOrDefault(v => v.Name == variantName);
+    }
+
+    private string CheckEnumUnitVariant(MemberAccessNode access, string enumName)
+    {
+        RequireEnumVisible(enumName, access.Span);
+        var variant = FindVariant(enumName, access.MemberName);
+
+        if (variant is null)
+        {
+            Report(DiagnosticCodes.TypeMismatch,
+                $"Enum '{_enums[enumName].Name}' has no variant '{access.MemberName}'.", access.Span);
+            return TypeConst.Error;
+        }
+
+        if (variant.Kind != EnumVariantKind.Unit)
+        {
+            Report(DiagnosticCodes.TypeMismatch,
+                $"Variant '{variant.Name}' of enum '{_enums[enumName].Name}' carries data; " +
+                (variant.Kind == EnumVariantKind.Tuple
+                    ? $"construct it as '{_enums[enumName].Name}.{variant.Name}(...)'."
+                    : $"construct it as '{_enums[enumName].Name}.{variant.Name} {{ ... }}'."),
+                access.Span);
+            return TypeConst.Error;
+        }
+
+        SemanticModel.MarkEnumConstruction(access);
+        SemanticModel.SetMangledName(access, enumName);
+        return enumName;
+    }
+
+    private string CheckEnumTupleVariant(MethodCallExpressionNode call, string enumName, SymbolTable scope)
+    {
+        RequireEnumVisible(enumName, call.Span);
+        var variant = FindVariant(enumName, call.MethodName);
+        var display = $"{_enums[enumName].Name}.{call.MethodName}";
+
+        if (variant is null || variant.Kind != EnumVariantKind.Tuple)
+        {
+            Report(DiagnosticCodes.TypeMismatch,
+                variant is null
+                    ? $"Enum '{_enums[enumName].Name}' has no variant '{call.MethodName}'."
+                    : $"Variant '{display}' is not a tuple variant.",
+                call.Span);
+            return CheckArgumentsOnly(call, scope);
+        }
+
+        if (call.Arguments.Count != variant.Fields.Count)
+        {
+            Report(DiagnosticCodes.ArgumentCountMismatch,
+                $"Variant '{display}' expects {variant.Fields.Count} arguments, but received {call.Arguments.Count}.",
+                call.Span);
+        }
+
+        for (var i = 0; i < call.Arguments.Count; i++)
+        {
+            if (i >= variant.Fields.Count)
+            {
+                CheckExpression(call.Arguments[i], scope);
+                continue;
+            }
+
+            var fieldType = SemanticModel.GetType(variant.Fields[i]);
+            var argumentType = CheckExpression(call.Arguments[i], scope, fieldType);
+            SemanticModel.SetExpressionType(call.Arguments[i], argumentType);
+
+            if (!CanAssign(fieldType, argumentType, call.Arguments[i]))
+            {
+                Report(DiagnosticCodes.TypeMismatch,
+                    $"Type Mismatch: Argument {i + 1} of variant '{display}' expects '{fieldType}', but got '{argumentType}'.",
+                    call.Arguments[i].Span);
+            }
+        }
+
+        SemanticModel.MarkEnumConstruction(call);
+        SemanticModel.SetMangledName(call, enumName);
+        return enumName;
+    }
+
+    private string CheckEnumStructVariant(EnumStructLiteralNode literal, SymbolTable scope)
+    {
+        var enumName = ResolveSymbolName(literal.EnumName);
+        if (!_enums.ContainsKey(enumName))
+        {
+            Report(DiagnosticCodes.TypeMismatch, $"Unknown enum '{literal.EnumName}'.", literal.Span);
+            foreach (var init in literal.Initializers)
+            {
+                CheckExpression(init.Value, scope);
+            }
+
+            return TypeConst.Error;
+        }
+
+        RequireEnumVisible(enumName, literal.Span);
+        var variant = FindVariant(enumName, literal.VariantName);
+        var display = $"{_enums[enumName].Name}.{literal.VariantName}";
+
+        if (variant is null || variant.Kind != EnumVariantKind.Struct)
+        {
+            Report(DiagnosticCodes.TypeMismatch,
+                variant is null
+                    ? $"Enum '{_enums[enumName].Name}' has no variant '{literal.VariantName}'."
+                    : $"Variant '{display}' is not a struct variant.",
+                literal.Span);
+            foreach (var init in literal.Initializers)
+            {
+                CheckExpression(init.Value, scope);
+            }
+
+            return TypeConst.Error;
+        }
+
+        var seen = new HashSet<string>();
+        foreach (var init in literal.Initializers)
+        {
+            var field = variant.Fields.FirstOrDefault(f => f.Name == init.FieldName);
+            if (field is null)
+            {
+                Report(DiagnosticCodes.TypeMismatch,
+                    $"Variant '{display}' has no field '{init.FieldName}'.", init.Span);
+                CheckExpression(init.Value, scope);
+                continue;
+            }
+
+            if (!seen.Add(init.FieldName))
+            {
+                Report(DiagnosticCodes.TypeMismatch,
+                    $"Duplicate initializer for field '{init.FieldName}' in '{display}'.", init.Span);
+            }
+
+            var fieldType = SemanticModel.GetType(field);
+            var valueType = CheckExpression(init.Value, scope, fieldType);
+            EnsureValueExpression(init.Value, valueType);
+
+            if (valueType != TypeConst.Error && !CanAssign(fieldType, valueType, init.Value))
+            {
+                Report(DiagnosticCodes.TypeMismatch,
+                    $"Cannot assign type '{valueType}' to field '{init.FieldName}' of type '{fieldType}'.",
+                    init.Value.Span);
+            }
+        }
+
+        foreach (var field in variant.Fields.Where(f => !seen.Contains(f.Name!)))
+        {
+            Report(DiagnosticCodes.TypeMismatch,
+                $"Missing initializer for field '{field.Name}' in '{display}'.", literal.Span);
+        }
+
+        SemanticModel.MarkEnumConstruction(literal);
+        SemanticModel.SetMangledName(literal, enumName);
+        return enumName;
+    }
+
+    // switch over an enum: patterns name variants and bind payload fields; without a
+    // `default` arm every variant must be covered.
+    private void CheckEnumSwitch(
+        SwitchStatementNode node,
+        SymbolTable scope,
+        string expectedReturnType,
+        string enumName)
+    {
+        var decl = _enums[enumName];
+        var covered = new HashSet<string>();
+
+        _switchDepth++;
+
+        try
+        {
+            foreach (var arm in node.Arms)
+            {
+                var armScope = new SymbolTable(scope);
+                var bindingCount = 0;
+
+                foreach (var pattern in arm.Patterns)
+                {
+                    SemanticModel.SetExpressionType(pattern, enumName);
+                    var bindings = new List<(IdentifierNode Name, string Type)>();
+                    var variant = ResolveEnumPattern(pattern, scope, enumName, bindings);
+
+                    if (variant is null)
+                    {
+                        continue;
+                    }
+
+                    SemanticModel.SetMangledName(pattern, enumName);
+
+                    if (!covered.Add(variant.Name))
+                    {
+                        Report(DiagnosticCodes.DuplicateCase,
+                            $"Variant '{decl.Name}.{variant.Name}' is already handled in this switch.",
+                            pattern.Span);
+                    }
+
+                    foreach (var (name, type) in bindings.Where(b => b.Name.Name != "_"))
+                    {
+                        bindingCount++;
+                        if (!armScope.TryDeclare(name.Name, type))
+                        {
+                            Report(DiagnosticCodes.DuplicateVariable,
+                                $"Variable '{name.Name}' is already declared in this scope.", name.Span);
+                        }
+                    }
+                }
+
+                if (arm.Patterns.Count > 1 && bindingCount > 0)
+                {
+                    Report(DiagnosticCodes.InvalidSwitch,
+                        "An arm with several patterns cannot bind payload values.", arm.Span);
+                }
+
+                foreach (var stmt in arm.Body)
+                {
+                    CheckStatement(stmt, armScope, expectedReturnType);
+                }
+            }
+
+            if (node.DefaultBody is not null)
+            {
+                var defaultScope = new SymbolTable(scope);
+                foreach (var stmt in node.DefaultBody)
+                {
+                    CheckStatement(stmt, defaultScope, expectedReturnType);
+                }
+            }
+        }
+        finally
+        {
+            _switchDepth--;
+        }
+
+        if (node.DefaultBody is null)
+        {
+            var missing = decl.Variants.Where(v => !covered.Contains(v.Name)).Select(v => $"'{v.Name}'").ToList();
+            if (missing.Count == 0)
+            {
+                SemanticModel.MarkExhaustiveSwitch(node);
+            }
+            else
+            {
+                Report(DiagnosticCodes.InvalidSwitch,
+                    $"Switch on enum '{decl.Name}' is not exhaustive; missing variant(s) {string.Join(", ", missing)}. " +
+                    "Add the missing arms or a 'default' arm.",
+                    node.Span);
+            }
+        }
+    }
+
+    // Returns the variant a pattern names (or null after reporting), collecting its bindings.
+    private EnumVariantNode? ResolveEnumPattern(
+        ExpressionNode pattern,
+        SymbolTable scope,
+        string enumName,
+        List<(IdentifierNode Name, string Type)> bindings)
+    {
+        string patternEnum;
+        string variantName;
+
+        switch (pattern)
+        {
+            case MemberAccessNode access when TryResolveEnumTarget(access.Target, scope, out patternEnum):
+                variantName = access.MemberName;
+                break;
+            case MethodCallExpressionNode call when TryResolveEnumTarget(call.Target, scope, out patternEnum):
+                variantName = call.MethodName;
+                break;
+            case EnumStructLiteralNode literal
+                when _enums.ContainsKey(patternEnum = ResolveSymbolName(literal.EnumName)):
+                variantName = literal.VariantName;
+                break;
+            default:
+                Report(DiagnosticCodes.InvalidSwitch,
+                    $"A case must be a variant of enum '{_enums[enumName].Name}', such as '{_enums[enumName].Name}.{_enums[enumName].Variants.FirstOrDefault()?.Name}'.",
+                    pattern.Span);
+                return null;
+        }
+
+        if (patternEnum != enumName)
+        {
+            Report(DiagnosticCodes.TypeMismatch,
+                $"Type Mismatch: Case of enum '{_enums[patternEnum].Name}' does not match switched type '{_enums[enumName].Name}'.",
+                pattern.Span);
+            return null;
+        }
+
+        var variant = FindVariant(enumName, variantName);
+        var display = $"{_enums[enumName].Name}.{variantName}";
+
+        if (variant is null)
+        {
+            Report(DiagnosticCodes.TypeMismatch,
+                $"Enum '{_enums[enumName].Name}' has no variant '{variantName}'.", pattern.Span);
+            return null;
+        }
+
+        var expectedKind = pattern switch
+        {
+            MemberAccessNode => EnumVariantKind.Unit,
+            MethodCallExpressionNode => EnumVariantKind.Tuple,
+            _ => EnumVariantKind.Struct
+        };
+
+        if (variant.Kind != expectedKind)
+        {
+            Report(DiagnosticCodes.TypeMismatch,
+                variant.Kind switch
+                {
+                    EnumVariantKind.Unit => $"Variant '{display}' has no payload; write it as '{display}'.",
+                    EnumVariantKind.Tuple => $"Variant '{display}' is a tuple variant; write it as '{display}(name, ...)'.",
+                    _ => $"Variant '{display}' is a struct variant; write it as '{display} {{ field: name, ... }}'."
+                },
+                pattern.Span);
+            return null;
+        }
+
+        switch (pattern)
+        {
+            case MethodCallExpressionNode call:
+                if (call.Arguments.Count != variant.Fields.Count)
+                {
+                    Report(DiagnosticCodes.ArgumentCountMismatch,
+                        $"Pattern '{display}' binds {call.Arguments.Count} values, but the variant has {variant.Fields.Count}.",
+                        pattern.Span);
+                    return null;
+                }
+
+                for (var i = 0; i < call.Arguments.Count; i++)
+                {
+                    if (call.Arguments[i] is IdentifierNode name)
+                    {
+                        bindings.Add((name, SemanticModel.GetType(variant.Fields[i])));
+                    }
+                    else
+                    {
+                        Report(DiagnosticCodes.InvalidSwitch,
+                            "A payload pattern must be a variable name that receives the value.",
+                            call.Arguments[i].Span);
+                    }
+                }
+
+                break;
+
+            case EnumStructLiteralNode literal:
+                var named = new HashSet<string>();
+                foreach (var init in literal.Initializers)
+                {
+                    var field = variant.Fields.FirstOrDefault(f => f.Name == init.FieldName);
+                    if (field is null || !named.Add(init.FieldName))
+                    {
+                        Report(DiagnosticCodes.TypeMismatch,
+                            field is null
+                                ? $"Variant '{display}' has no field '{init.FieldName}'."
+                                : $"Field '{init.FieldName}' is bound twice in '{display}'.",
+                            init.Span);
+                    }
+                    else if (init.Value is IdentifierNode name)
+                    {
+                        bindings.Add((name, SemanticModel.GetType(field)));
+                    }
+                    else
+                    {
+                        Report(DiagnosticCodes.InvalidSwitch,
+                            "A payload pattern must be a variable name that receives the value.",
+                            init.Value.Span);
+                    }
+                }
+
+                foreach (var field in variant.Fields.Where(f => !named.Contains(f.Name!)))
+                {
+                    Report(DiagnosticCodes.TypeMismatch,
+                        $"Pattern '{display}' does not bind field '{field.Name}'; bind it to a name or to '_'.",
+                        pattern.Span);
+                }
+
+                break;
+        }
+
+        return variant;
+    }
+
     private string CheckExpression(
         ExpressionNode expression,
         SymbolTable scope,
@@ -930,6 +1417,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             IndexExpressionNode indexExpression => CheckIndexExpression(indexExpression, scope),
             FunctionCallExpressionNode functionCall => CheckFunctionCall(functionCall, scope),
             StructLiteralNode structLiteral => CheckStructLiteral(structLiteral, scope),
+            EnumStructLiteralNode enumLiteral => CheckEnumStructVariant(enumLiteral, scope),
             MemberAccessNode memberAccess => CheckMemberAccess(memberAccess, scope),
 
             _ => throw new Exception(
@@ -1033,6 +1521,11 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         MemberAccessNode memberAccess,
         SymbolTable scope)
     {
+        if (TryResolveEnumTarget(memberAccess.Target, scope, out var unitEnum))
+        {
+            return CheckEnumUnitVariant(memberAccess, unitEnum);
+        }
+
         var targetType = CheckExpression(memberAccess.Target, scope);
 
         if (targetType == TypeConst.Error)
@@ -1177,6 +1670,11 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
     // Struct.function(args) calls an associated function without one.
     private string CheckMethodCall(MethodCallExpressionNode call, SymbolTable scope)
     {
+        if (TryResolveEnumTarget(call.Target, scope, out var tupleEnum))
+        {
+            return CheckEnumTupleVariant(call, tupleEnum, scope);
+        }
+
         string structName;
         var receiverType = TypeConst.Error;
         var isAssociatedCall = false;
@@ -2059,6 +2557,12 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         if (_structs.ContainsKey(resolvedType))
         {
             RequireStructVisible(resolvedType, span);
+            return;
+        }
+
+        if (_enums.ContainsKey(resolvedType))
+        {
+            RequireEnumVisible(resolvedType, span);
             return;
         }
 

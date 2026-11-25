@@ -222,6 +222,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         var functions = new List<FunctionDeclarationNode>();
         var externFunctions = new List<ExternFunctionDeclarationNode>();
         var structs = new List<StructDeclarationNode>();
+        var enums = new List<EnumDeclarationNode>();
 
         if (Current.Type == TokenType.KeywordModule)
         {
@@ -241,7 +242,11 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             {
                 var declarationKind = Current.Type == TokenType.KeywordPub ? Peek(1).Type : Current.Type;
 
-                if (declarationKind == TokenType.KeywordStruct)
+                if (declarationKind == TokenType.KeywordEnum)
+                {
+                    enums.Add(ParseEnumDeclaration());
+                }
+                else if (declarationKind == TokenType.KeywordStruct)
                 {
                     structs.Add(ParseStructDeclaration());
                 }
@@ -277,7 +282,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
         var span = CreateSpan(startSpan.Start, endSpan.End);
 
-        return new ProgramNode(module, imports, functions, structs, externFunctions, span, fileName);
+        return new ProgramNode(module, imports, functions, structs, enums, externFunctions, span, fileName);
     }
 
     private ModuleDeclarationNode ParseModuleDeclaration()
@@ -405,9 +410,128 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             currentModifier);
     }
 
+    private EnumDeclarationNode ParseEnumDeclaration()
+    {
+        var visibility = VisibilityModifier.Private;
+        var startToken = Current;
+        if (Current.Type == TokenType.KeywordPub)
+        {
+            visibility = VisibilityModifier.Public;
+            Consume(TokenType.KeywordPub);
+        }
+
+        Consume(TokenType.KeywordEnum);
+        var nameToken = Consume(TokenType.Identifier);
+        Consume(TokenType.LBrace);
+
+        var variants = new List<EnumVariantNode>();
+
+        while (Current.Type != TokenType.RBrace && Current.Type != TokenType.EndOfFile)
+        {
+            var variantToken = Consume(TokenType.Identifier);
+            var fields = new List<EnumVariantFieldNode>();
+            var kind = EnumVariantKind.Unit;
+
+            if (Current.Type == TokenType.LParen)
+            {
+                kind = EnumVariantKind.Tuple;
+                Consume(TokenType.LParen);
+
+                while (Current.Type != TokenType.RParen && Current.Type != TokenType.EndOfFile)
+                {
+                    var typeToken = Current;
+                    var type = ParseTypeName();
+                    fields.Add(new EnumVariantFieldNode(null, type,
+                        CreateSpan(typeToken.Span.Start, Peek(-1).Span.End)));
+
+                    if (Current.Type != TokenType.Comma)
+                    {
+                        break;
+                    }
+
+                    Consume(TokenType.Comma);
+                }
+
+                Consume(TokenType.RParen);
+            }
+            else if (Current.Type == TokenType.LBrace)
+            {
+                kind = EnumVariantKind.Struct;
+                Consume(TokenType.LBrace);
+
+                while (Current.Type != TokenType.RBrace && Current.Type != TokenType.EndOfFile)
+                {
+                    var fieldToken = Consume(TokenType.Identifier);
+                    Consume(TokenType.Colon);
+                    var type = ParseTypeName();
+                    fields.Add(new EnumVariantFieldNode(fieldToken.Value, type,
+                        CreateSpan(fieldToken.Span.Start, Peek(-1).Span.End)));
+
+                    if (Current.Type != TokenType.Comma)
+                    {
+                        break;
+                    }
+
+                    Consume(TokenType.Comma);
+                }
+
+                Consume(TokenType.RBrace);
+            }
+
+            variants.Add(new EnumVariantNode(
+                variantToken.Value,
+                kind,
+                fields,
+                CreateSpan(variantToken.Span.Start, Peek(-1).Span.End)));
+
+            if (Current.Type == TokenType.Comma)
+            {
+                Consume(TokenType.Comma);
+            }
+        }
+
+        var end = Consume(TokenType.RBrace);
+
+        return new EnumDeclarationNode(
+            nameToken.Value,
+            variants,
+            CreateSpan(startToken.Span.Start, end.Span.End),
+            visibility);
+    }
+
+    // True while parsing a switch pattern, where `Enum.Variant { x, y }` may bind by field name.
+    private bool _inSwitchPattern;
+
+    private bool IsEnumStructBodyStart()
+    {
+        if (Current.Type != TokenType.LBrace || Peek(1).Type != TokenType.Identifier)
+        {
+            return false;
+        }
+
+        var after = Peek(2).Type;
+        return after == TokenType.Colon ||
+               (_inSwitchPattern && after is TokenType.Comma or TokenType.RBrace);
+    }
+
     private StructLiteralNode ParseStructLiteral(Token identifierToken)
     {
         var structName = identifierToken.Value;
+        var initializers = ParseFieldInitializers(out var closingBrace);
+
+        var span = CreateSpan(
+            identifierToken.Span.Start,
+            closingBrace.Span.End);
+
+        return new StructLiteralNode(
+            structName,
+            initializers,
+            span);
+    }
+
+    // `{ name: value, ... }`
+    private List<StructFieldInitNode> ParseFieldInitializers(out Token closingBrace)
+    {
         Consume(TokenType.LBrace);
 
         var initializers = new List<StructFieldInitNode>();
@@ -419,9 +543,26 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             var fieldName = fieldToken.Value;
             Consume(TokenType.Identifier);
 
-            Consume(TokenType.Colon);
+            ExpressionNode valueExpr;
+            if (_inSwitchPattern && Current.Type == TokenType.Colon)
+            {
+                Report(
+                    DiagnosticCodes.UnexpectedToken,
+                    $"Syntax Error: Struct patterns bind fields by name; write '{fieldName}' instead of '{fieldName}: ...'.",
+                    Current.Span);
+                throw new ParseException();
+            }
 
-            var valueExpr = ParseExpression();
+            if (_inSwitchPattern)
+            {
+                // Shorthand: `x` binds the field `x` to a local named `x`.
+                valueExpr = new IdentifierNode(fieldName, fieldToken.Span);
+            }
+            else
+            {
+                Consume(TokenType.Colon);
+                valueExpr = ParseExpression();
+            }
 
             var initSpan = CreateSpan(
                 fieldToken.Span.Start,
@@ -437,16 +578,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             Consume(TokenType.Comma);
         }
 
-        var closingBrace = Consume(TokenType.RBrace);
-
-        var span = CreateSpan(
-            identifierToken.Span.Start,
-            closingBrace.Span.End);
-
-        return new StructLiteralNode(
-            structName,
-            initializers,
-            span);
+        closingBrace = Consume(TokenType.RBrace);
+        return initializers;
     }
 
     private string ParseTypeName()
@@ -883,11 +1016,20 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
                 continue;
             }
 
-            var patterns = new List<ExpressionNode> { ParseExpression() };
-            while (Current.Type == TokenType.Comma)
+            var patterns = new List<ExpressionNode>();
+            _inSwitchPattern = true;
+            try
             {
-                Advance();
                 patterns.Add(ParseExpression());
+                while (Current.Type == TokenType.Comma)
+                {
+                    Advance();
+                    patterns.Add(ParseExpression());
+                }
+            }
+            finally
+            {
+                _inSwitchPattern = false;
             }
 
             Consume(TokenType.FatArrow);
@@ -1006,6 +1148,17 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
                     Current.Span.Start.Line == Peek(-1).Span.End.Line)
                 {
                     leftExpr = ParseMethodCall((MemberAccessNode)leftExpr);
+                }
+                else if (IsEnumStructBodyStart() &&
+                         leftExpr is MemberAccessNode { Target: IdentifierNode enumIdentifier } variantAccess)
+                {
+                    // Enum.Variant { field: value }
+                    var initializers = ParseFieldInitializers(out var closing);
+                    leftExpr = new EnumStructLiteralNode(
+                        enumIdentifier.Name,
+                        variantAccess.MemberName,
+                        initializers,
+                        CreateSpan(variantAccess.Span!.Start, closing.Span.End));
                 }
 
                 continue;

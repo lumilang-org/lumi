@@ -1,7 +1,7 @@
 module std::mem
 
-pub extern func malloc(usize size) -> *u8
-pub extern func free(*u8 ptr) -> void
+extern func malloc(usize size) -> *u8
+extern func free(*u8 ptr) -> void
 
 pub struct ArenaBlock {
     pub *ArenaBlock next
@@ -55,7 +55,7 @@ pub func arena_block_new(usize cap) -> *ArenaBlock {
     return block
 }
 
-pub func arena_init(*Arena arena, usize initial_capacity) -> bool {
+func arena_init(*Arena arena, usize initial_capacity) -> bool {
     *ArenaBlock first = arena_block_new(initial_capacity)
     if first == nil {
         (*arena).head = nil
@@ -70,7 +70,7 @@ pub func arena_init(*Arena arena, usize initial_capacity) -> bool {
     return true
 }
 
-pub func arena_reset(*Arena arena) -> void {
+func arena_reset(*Arena arena) -> void {
     *ArenaBlock cur = (*arena).head
     while cur != nil {
         cur.offset = 0
@@ -79,7 +79,7 @@ pub func arena_reset(*Arena arena) -> void {
     (*arena).current = (*arena).head
 }
 
-pub func arena_destroy(*Arena arena) -> void {
+func arena_destroy(*Arena arena) -> void {
     *ArenaBlock cur = (*arena).head
     while cur != nil {
         *ArenaBlock next = cur.next
@@ -95,7 +95,7 @@ pub func arena_destroy(*Arena arena) -> void {
     (*arena).block_capacity = 0
 }
 
-pub func arena_alloc(*Arena arena, usize size, usize align) -> *u8 {
+func arena_alloc(*Arena arena, usize size, usize align) -> *u8 {
     if align == 0 || (align & (align - 1)) != 0 {
         return nil
     }
