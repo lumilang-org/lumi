@@ -7,8 +7,9 @@ public sealed class Lexer
 {
     public static readonly Dictionary<string, TokenType> Keywords = new()
     {
-        { "print", TokenType.PrintFunc },
-        { "println", TokenType.PrintFunc },
+        { TypeConst.Print, TokenType.PrintFunc },
+        { TypeConst.Println, TokenType.PrintFunc },
+        { TypeConst.Pub, TokenType.KeywordPub },
         { TypeConst.Let, TokenType.KeywordLet },
         { TypeConst.As, TokenType.KeywordAs },
         { TypeConst.In, TokenType.KeywordIn },

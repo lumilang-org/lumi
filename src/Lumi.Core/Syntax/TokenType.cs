@@ -2,6 +2,7 @@ namespace Lumi.Core.Syntax;
 
 public enum TokenType
 {
+    KeywordPub,
     KeywordLet,
     KeywordAs,
     KeywordIn,

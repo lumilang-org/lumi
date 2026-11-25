@@ -29,9 +29,9 @@ func main() -> void {
     println(c.get())
 }");
 
-        Assert.Contains("define %Counter @Counter__new(i32", ir);
-        Assert.Contains("define void @Counter__bump(ptr", ir);
-        Assert.Contains("define i32 @Counter__get(%Counter", ir);
+        Assert.Contains("define internal %Counter @Counter__new(i32", ir);
+        Assert.Contains("define internal void @Counter__bump(ptr", ir);
+        Assert.Contains("define internal i32 @Counter__get(%Counter", ir);
         Assert.Contains("call void @Counter__bump(ptr %c", ir);
     }
 

@@ -108,6 +108,12 @@ public sealed partial class Codegen
                     mangledName,
                     functionType);
 
+                // Private functions are not visible to other object files.
+                if (funcNode.VisibilityModifier == VisibilityModifier.Private && mangledName != "main")
+                {
+                    function.Linkage = LLVMLinkage.LLVMInternalLinkage;
+                }
+
                 _functions.Add(
                     mangledName,
                     (function, functionType));

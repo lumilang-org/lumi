@@ -91,7 +91,15 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
     private ExternFunctionDeclarationNode ParseExternFunction()
     {
-        var externToken = Consume(TokenType.KeywordExtern);
+        var visibility = VisibilityModifier.Private;
+        var externStart = Current;
+        if (Current.Type == TokenType.KeywordPub)
+        {
+            visibility = VisibilityModifier.Public;
+            Consume(TokenType.KeywordPub);
+        }
+
+        Consume(TokenType.KeywordExtern);
         Consume(TokenType.KeywordFunc);
 
         var funcName = Current.Value;
@@ -131,17 +139,26 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         }
 
         // The declaration ends with its return type, not with the token that follows it.
-        var span = CreateSpan(externToken.Span.Start, Peek(-1).Span.End);
+        var span = CreateSpan(externStart.Span.Start, Peek(-1).Span.End);
 
         return new ExternFunctionDeclarationNode(
             funcName,
             parameters,
             returnType,
-            span);
+            span,
+            visibility);
     }
 
     private FunctionDeclarationNode ParseFunction()
     {
+        var currentModifier = VisibilityModifier.Private;
+
+        if (Current.Type == TokenType.KeywordPub)
+        {
+            currentModifier = VisibilityModifier.Public;
+            Consume(TokenType.KeywordPub);
+        }
+
         var start = Consume(TokenType.KeywordFunc);
 
         var funcName = Current.Value;
@@ -166,7 +183,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             throw new ParseException();
         }
 
-        var returnType = Current.Type == TokenType.TypeVoid ? "void" : ParseTypeName();
+        var returnType = Current.Type == TokenType.TypeVoid ? TypeConst.Void : ParseTypeName();
         if (returnType == TypeConst.Void)
         {
             Advance();
@@ -193,7 +210,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             parameters,
             returnType,
             body,
-            span);
+            span,
+            currentModifier);
     }
 
 
@@ -221,11 +239,13 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
             try
             {
-                if (Current.Type == TokenType.KeywordStruct)
+                var declarationKind = Current.Type == TokenType.KeywordPub ? Peek(1).Type : Current.Type;
+
+                if (declarationKind == TokenType.KeywordStruct)
                 {
                     structs.Add(ParseStructDeclaration());
                 }
-                else if (Current.Type == TokenType.KeywordExtern)
+                else if (declarationKind == TokenType.KeywordExtern)
                 {
                     externFunctions.Add(ParseExternFunction());
                 }
@@ -297,7 +317,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
     private void SynchronizeTopLevel()
     {
         while (Current.Type != TokenType.EndOfFile &&
-               Current.Type != TokenType.KeywordFunc)
+               Current.Type != TokenType.KeywordFunc &&
+               Current.Type != TokenType.KeywordPub)
         {
             Advance();
         }
@@ -305,6 +326,13 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
     private StructDeclarationNode ParseStructDeclaration()
     {
+        var currentModifier = VisibilityModifier.Private;
+        if (Current.Type == TokenType.KeywordPub)
+        {
+            currentModifier = VisibilityModifier.Public;
+            Consume(TokenType.KeywordPub);
+        }
+
         var start = Consume(TokenType.KeywordStruct);
 
         var nameToken = Current;
@@ -319,10 +347,18 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         while (Current.Type != TokenType.RBrace &&
                Current.Type != TokenType.EndOfFile)
         {
-            if (Current.Type == TokenType.KeywordFunc)
+            if (Current.Type == TokenType.KeywordFunc ||
+                (Current.Type == TokenType.KeywordPub && Peek(1).Type == TokenType.KeywordFunc))
             {
                 methods.Add(ParseFunction());
                 continue;
+            }
+
+            var fieldModifier = VisibilityModifier.Private;
+            if (Current.Type == TokenType.KeywordPub)
+            {
+                fieldModifier = VisibilityModifier.Public;
+                Consume(TokenType.KeywordPub);
             }
 
             if (!IsTypeToken(Current.Type) &&
@@ -347,7 +383,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
                 fieldTypeToken.Span.Start,
                 fieldNameToken.Span.End);
 
-            fields.Add(new StructFieldNode(fieldType, fieldName, fieldSpan));
+            fields.Add(new StructFieldNode(fieldType, fieldName, fieldSpan, fieldModifier));
 
             if (Current.Type == TokenType.Colon)
             {
@@ -365,7 +401,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             structName,
             fields,
             methods,
-            span);
+            span,
+            currentModifier);
     }
 
     private StructLiteralNode ParseStructLiteral(Token identifierToken)

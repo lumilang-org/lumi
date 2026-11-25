@@ -261,8 +261,8 @@ func main() -> void {
 }",
             ("util.lumi", @"
 module util
-struct Box { i32 n }
-func inc(*Box b) -> void { (*b).n++ }")));
+pub struct Box { pub i32 n }
+pub func inc(*Box b) -> void { (*b).n++ }")));
 
         if (output is null) return;
         Assert.Equal("2\n", output);

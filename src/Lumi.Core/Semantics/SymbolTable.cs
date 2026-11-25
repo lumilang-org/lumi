@@ -4,7 +4,6 @@ namespace Lumi.Core.Semantics;
 
 public sealed class SymbolTable(SymbolTable? parent = null)
 {
-    private readonly SymbolTable? _parent = parent;
     private readonly Dictionary<string, string> _symbols = new();
 
     /// <summary>
@@ -27,9 +26,9 @@ public sealed class SymbolTable(SymbolTable? parent = null)
             return true;
         }
 
-        if (_parent is not null)
+        if (parent is not null)
         {
-            return _parent.TryLookup(name, out type);
+            return parent.TryLookup(name, out type);
         }
 
         type = TypeConst.Error;

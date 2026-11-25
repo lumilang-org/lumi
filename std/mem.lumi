@@ -1,38 +1,38 @@
 module std::mem
 
-extern func malloc(usize size) -> *u8
-extern func free(*u8 ptr) -> void
+pub extern func malloc(usize size) -> *u8
+pub extern func free(*u8 ptr) -> void
 
-struct ArenaBlock {
-    *ArenaBlock next
-    *u8 buf
-    usize offset
-    usize capacity
+pub struct ArenaBlock {
+    pub *ArenaBlock next
+    pub *u8 buf
+    pub usize offset
+    pub usize capacity
 }
 
-struct Arena {
-    *ArenaBlock head
-    *ArenaBlock current
-    usize block_capacity
+pub struct Arena {
+    pub *ArenaBlock head
+    pub *ArenaBlock current
+    pub usize block_capacity
 
-    func init(*Arena self, usize initial_capacity) -> bool {
+    pub func init(*Arena self, usize initial_capacity) -> bool {
         return arena_init(self, initial_capacity)
     }
 
-    func alloc(*Arena self, usize size, usize align) -> *u8 {
+    pub func alloc(*Arena self, usize size, usize align) -> *u8 {
         return arena_alloc(self, size, align)
     }
 
-    func reset(*Arena self) -> void {
+    pub func reset(*Arena self) -> void {
         arena_reset(self)
     }
 
-    func destroy(*Arena self) -> void {
+    pub func destroy(*Arena self) -> void {
         arena_destroy(self)
     }
 }
 
-func arena_block_new(usize cap) -> *ArenaBlock {
+pub func arena_block_new(usize cap) -> *ArenaBlock {
     if cap == 0 {
         return nil
     }
@@ -55,7 +55,7 @@ func arena_block_new(usize cap) -> *ArenaBlock {
     return block
 }
 
-func arena_init(*Arena arena, usize initial_capacity) -> bool {
+pub func arena_init(*Arena arena, usize initial_capacity) -> bool {
     *ArenaBlock first = arena_block_new(initial_capacity)
     if first == nil {
         (*arena).head = nil
@@ -70,7 +70,7 @@ func arena_init(*Arena arena, usize initial_capacity) -> bool {
     return true
 }
 
-func arena_reset(*Arena arena) -> void {
+pub func arena_reset(*Arena arena) -> void {
     *ArenaBlock cur = (*arena).head
     while cur != nil {
         cur.offset = 0
@@ -79,7 +79,7 @@ func arena_reset(*Arena arena) -> void {
     (*arena).current = (*arena).head
 }
 
-func arena_destroy(*Arena arena) -> void {
+pub func arena_destroy(*Arena arena) -> void {
     *ArenaBlock cur = (*arena).head
     while cur != nil {
         *ArenaBlock next = cur.next
@@ -95,7 +95,7 @@ func arena_destroy(*Arena arena) -> void {
     (*arena).block_capacity = 0
 }
 
-func arena_alloc(*Arena arena, usize size, usize align) -> *u8 {
+pub func arena_alloc(*Arena arena, usize size, usize align) -> *u8 {
     if align == 0 || (align & (align - 1)) != 0 {
         return nil
     }

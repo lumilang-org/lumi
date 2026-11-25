@@ -142,6 +142,27 @@ c.bump(2)
 - The receiver adapts to `self`: a struct variable passed to `*S self` has its address taken (it must be addressable, so not a temporary), and a `*S` passed to `S self` is dereferenced.
 - Each function is emitted as `<MangledStruct>__<name>`, e.g. `std_mem_Arena__reset`.
 
+### 2.3.2 Visibility (`pub`)
+
+Everything is private to its module unless marked `pub`: top-level `func`, `extern func` and `struct`,
+struct fields, and functions inside structs.
+
+```
+module shapes
+pub struct Account {
+    i32 balance          // private field
+    pub i32 id
+    pub func open(i32 id) -> Account { return Account { balance: 0, id: id } }
+}
+```
+
+- Inside the defining module (including the struct's own functions) everything is accessible.
+- From another module only `pub` items are: structs, fields (`p.f` read and write), instance methods,
+  associated functions (`Struct.f()`) and plain functions. Violations are `LUMI1016`.
+- A struct literal outside its module needs a `pub` struct whose fields are **all** `pub`; otherwise
+  provide a `pub` associated function. Layout (`sizeof`, `alignof`) ignores visibility.
+- Non-`pub` functions other than `main` get internal linkage in the generated object file.
+
 ## 4. Struct Literals & Member Access
 
 ### 4.1 Struct Literals

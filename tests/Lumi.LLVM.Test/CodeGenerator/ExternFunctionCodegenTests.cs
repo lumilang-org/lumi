@@ -101,8 +101,8 @@ func main() -> void {
 }",
             ("c.lumi", @"
 module std::c
-extern func abs(i32 n) -> i32
-func twice(i32 n) -> i32 { return abs(n) * 2 }")));
+pub extern func abs(i32 n) -> i32
+pub func twice(i32 n) -> i32 { return abs(n) * 2 }")));
 
         if (output is null) return;
         Assert.Equal("4\n10\n", output);
@@ -116,7 +116,7 @@ import c
 func main() -> void { i32 a = std::c::abs(1) }",
             ("c.lumi", @"
 module std::c
-extern func abs(i32 n) -> i32"));
+pub extern func abs(i32 n) -> i32"));
 
         Assert.Contains("declare i32 @abs(i32", ir);
         Assert.DoesNotContain("std_c_abs", ir);
@@ -135,11 +135,11 @@ func main() -> void {
             ("a.lumi", @"
 module a
 extern func abs(i32 n) -> i32
-func twice(i32 n) -> i32 { return abs(n) * 2 }"),
+pub func twice(i32 n) -> i32 { return abs(n) * 2 }"),
             ("b.lumi", @"
 module b
 extern func abs(i32 n) -> i32
-func thrice(i32 n) -> i32 { return abs(n) * 3 }"));
+pub func thrice(i32 n) -> i32 { return abs(n) * 3 }"));
 
         Assert.Equal(1, CountOccurrences(ir, "declare i32 @abs("));
         Assert.DoesNotContain("@abs.", ir);

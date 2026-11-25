@@ -35,6 +35,7 @@ public static class DiagnosticCodes
     public const string InvalidUpdateTarget = "LUMI1013";
     public const string InvalidAddressOperand = "LUMI1014";
     public const string InvalidDereference = "LUMI1015";
+    public const string PrivateAccess = "LUMI1016";
     public const string CircularImport = "LUMI5001";
     public const string ModuleNotFound = "LUMI5002";
 

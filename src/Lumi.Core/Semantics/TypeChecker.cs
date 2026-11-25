@@ -11,12 +11,15 @@ namespace Lumi.Core.Semantics;
 
 public sealed class TypeChecker(DiagnosticBag diagnostic)
 {
+    // Mangled names of struct functions whose first parameter is a valid `self`.
+    private readonly HashSet<string> _instanceMethods = new();
     private readonly Dictionary<string, string> _moduleContexts = new();
     private readonly ReturnAnalyzer _returnAnalyzer = new();
     private readonly Dictionary<string, StructDeclarationNode> _structs = new();
 
-    // Mangled names of struct functions whose first parameter is a valid `self`.
-    private readonly HashSet<string> _instanceMethods = new();
+    // Defining module prefix of every struct and function, by mangled name ("" = no module).
+    private readonly Dictionary<string, string> _functionModules = new();
+    private readonly Dictionary<string, string> _structModules = new();
 
     private string _currentFile = "<unknown>";
     private IReadOnlyList<ImportDeclarationNode> _currentImports = [];
@@ -62,6 +65,8 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
     public void CheckCompilationUnit(IReadOnlyList<ProgramNode> modules)
     {
         _structs.Clear();
+        _structModules.Clear();
+        _functionModules.Clear();
         _instanceMethods.Clear();
         Functions.Clear();
 
@@ -80,6 +85,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                         structDecl.Span);
                 }
 
+                _structModules[mangledName] = modulePrefix;
                 SemanticModel.SetMangledName(structDecl, mangledName);
             }
         }
@@ -98,7 +104,10 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                 var signature = new FunctionSignature(
                     mangledName,
                     func.Parameters.Select(p => ResolveType(p.Type)).ToArray(),
-                    ResolveType(func.ReturnType));
+                    ResolveType(func.ReturnType),
+                    func.VisibilityModifier);
+
+                _functionModules.TryAdd(mangledName, modulePrefix);
 
                 if (!Functions.TryRegister(signature))
                 {
@@ -142,7 +151,10 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                 var signature = new FunctionSignature(
                     mangledName,
                     paramTypes,
-                    resolvedReturn);
+                    resolvedReturn,
+                    externFunc.VisibilityModifier);
+
+                _functionModules.TryAdd(mangledName, modulePrefix);
 
                 if (!Functions.TryRegister(signature))
                 {
@@ -217,7 +229,10 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         var signature = new FunctionSignature(
             mangledName,
             method.Parameters.Select(p => ResolveType(p.Type)).ToArray(),
-            ResolveType(method.ReturnType));
+            ResolveType(method.ReturnType),
+            method.VisibilityModifier);
+
+        _functionModules.TryAdd(mangledName, _structModules.GetValueOrDefault(structName, ""));
 
         if (!Functions.TryRegister(signature))
         {
@@ -233,6 +248,38 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
         SemanticModel.SetType(method, signature.ReturnType);
         SemanticModel.SetMangledName(method, mangledName);
+    }
+
+    private bool IsAccessible(string? owningModule, VisibilityModifier visibility)
+    {
+        return visibility == VisibilityModifier.Public || (owningModule ?? "") == _currentModulePrefix;
+    }
+
+    private static string ModuleDisplay(string? module)
+    {
+        return string.IsNullOrEmpty(module) ? "the root module" : $"module '{module}'";
+    }
+
+    private void RequireStructVisible(string structName, SourceSpan? span)
+    {
+        if (_structs.TryGetValue(structName, out var decl)
+            && !IsAccessible(_structModules.GetValueOrDefault(structName), decl.VisibilityModifier))
+        {
+            Report(DiagnosticCodes.PrivateAccess,
+                $"Struct '{decl.Name}' is private to {ModuleDisplay(_structModules.GetValueOrDefault(structName))}.",
+                span);
+        }
+    }
+
+    private void RequireFunctionVisible(string mangledName, string displayName, FunctionSignature signature, SourceSpan? span)
+    {
+        var owner = _functionModules.GetValueOrDefault(mangledName);
+        if (!IsAccessible(owner, signature.VisibilityModifier))
+        {
+            Report(DiagnosticCodes.PrivateAccess,
+                $"Function '{displayName}' is private to {ModuleDisplay(owner)}.",
+                span);
+        }
     }
 
     private string StructDisplayName(string mangledName)
@@ -323,6 +370,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                 {
                     inferred = TypeConst.I32;
                 }
+
                 EnsureValueExpression(letDecl.Initializer!, inferred);
 
                 if (inferred == TypeConst.Nil)
@@ -813,6 +861,27 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         SemanticModel.SetMangledName(literal, resolvedName);
         SemanticModel.SetExpressionType(literal, resolvedName);
 
+        RequireStructVisible(resolvedName, literal.Span);
+
+        // Outside its module a literal is only allowed when every field is public.
+        var literalOwner = _structModules.GetValueOrDefault(resolvedName, "");
+        if (literalOwner != _currentModulePrefix)
+        {
+            var privateFields = structDecl.Fields
+                .Where(f => f.VisibilityModifier != VisibilityModifier.Public)
+                .Select(f => f.Name)
+                .ToList();
+
+            if (privateFields.Count > 0)
+            {
+                Report(DiagnosticCodes.PrivateAccess,
+                    $"Cannot construct struct '{structDecl.Name}' outside {ModuleDisplay(literalOwner)}: " +
+                    $"field(s) {string.Join(", ", privateFields.Select(n => $"'{n}'"))} are private. " +
+                    "Use a 'pub' associated function instead.",
+                    literal.Span);
+            }
+        }
+
         var declaredFields = structDecl.Fields.ToDictionary(f => f.Name, f => f.Type);
         var seenFields = new HashSet<string>();
 
@@ -901,6 +970,14 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             return TypeConst.Error;
         }
 
+        if (!IsAccessible(_structModules.GetValueOrDefault(targetType), field.VisibilityModifier))
+        {
+            Report(DiagnosticCodes.PrivateAccess,
+                $"Field '{field.Name}' of struct '{structDecl.Name}' is private to " +
+                $"{ModuleDisplay(_structModules.GetValueOrDefault(targetType))}.",
+                memberAccess.Span);
+        }
+
         return ResolveType(field.Type);
     }
 
@@ -943,6 +1020,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             return TypeConst.Error;
         }
 
+        RequireFunctionVisible(resolvedName, functionCall.Name, signature, functionCall.Span);
         SemanticModel.SetMangledName(functionCall, resolvedName);
 
         CheckCallArguments(functionCall.Name, signature, 0, functionCall.Arguments, scope, functionCall.Span);
@@ -1045,6 +1123,12 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             return CheckArgumentsOnly(call, scope);
         }
 
+        if (isAssociatedCall)
+        {
+            RequireStructVisible(structName, call.Target.Span);
+        }
+
+        RequireFunctionVisible(mangledName, displayName, signature, call.Span);
         SemanticModel.SetMangledName(call, mangledName);
 
         if (isAssociatedCall)
@@ -1300,11 +1384,11 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         }
 
         var allowed = sourceType == targetType
-                      || PointerTypes.IsPointer(sourceType) && PointerTypes.IsPointer(targetType)
-                      || TypePromoter.IsIntegerType(sourceType) && TypePromoter.IsIntegerType(targetType)
-                      || PointerTypes.IsPointer(sourceType) && targetType == TypeConst.Usize
-                      || sourceType == TypeConst.Usize && PointerTypes.IsPointer(targetType)
-                      || sourceType == TypeConst.Nil && PointerTypes.IsPointer(targetType);
+                      || (PointerTypes.IsPointer(sourceType) && PointerTypes.IsPointer(targetType))
+                      || (TypePromoter.IsIntegerType(sourceType) && TypePromoter.IsIntegerType(targetType))
+                      || (PointerTypes.IsPointer(sourceType) && targetType == TypeConst.Usize)
+                      || (sourceType == TypeConst.Usize && PointerTypes.IsPointer(targetType))
+                      || (sourceType == TypeConst.Nil && PointerTypes.IsPointer(targetType));
 
         if (!allowed)
         {
@@ -1873,6 +1957,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         var resolvedType = ResolveSymbolName(type);
         if (_structs.ContainsKey(resolvedType))
         {
+            RequireStructVisible(resolvedType, span);
             return;
         }
 

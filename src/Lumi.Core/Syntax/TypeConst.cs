@@ -2,6 +2,7 @@ namespace Lumi.Core.Syntax;
 
 public static class TypeConst
 {
+    public const string Pub = "pub";
     public const string Let = "let";
     public const string Void = "void";
     public const string Import = "import";
@@ -62,4 +63,6 @@ public static class TypeConst
     public const string Return = "return";
     public const string Struct = "struct";
     public const string Error = "<error>";
+    public const string Print = "print";
+    public const string Println = "println";
 }

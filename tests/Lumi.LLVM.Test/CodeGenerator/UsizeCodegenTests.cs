@@ -20,7 +20,7 @@ func main() -> void {
     usize r = twice(n)
 }");
 
-        Assert.Contains($"define {PointerWidthType} @twice({PointerWidthType} %0)", ir);
+        Assert.Contains($"define internal {PointerWidthType} @twice({PointerWidthType} %0)", ir);
         Assert.Contains($"%n = alloca {PointerWidthType}", ir);
         Assert.Contains($"%sizes = alloca [2 x {PointerWidthType}]", ir);
         Assert.Contains($"%s = alloca %Slice", ir);

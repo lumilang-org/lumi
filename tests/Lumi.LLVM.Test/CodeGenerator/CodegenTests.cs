@@ -163,8 +163,8 @@ public class CodegenTests
             var mathPath = Path.Combine(tempDir, "math.lumi");
             File.WriteAllText(mathPath, @"
 module std::math
-struct Point { i32 x i32 y }
-func add(i32 a, i32 b) -> i32 { return a + b }
+pub struct Point { pub i32 x pub i32 y }
+pub func add(i32 a, i32 b) -> i32 { return a + b }
 ");
 
             var mainPath = Path.Combine(tempDir, "main.lumi");

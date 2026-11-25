@@ -70,7 +70,7 @@ import util
 func main() -> void { string s = util::greeting() println(s) }",
             ("util.lumi", @"
 module util
-func greeting() -> string { return ""hello"" }"));
+pub func greeting() -> string { return ""hello"" }"));
 
         Assert.Contains("c\"hello\\00\"", ir);
     }
