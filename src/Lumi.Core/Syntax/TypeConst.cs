@@ -3,6 +3,8 @@ namespace Lumi.Core.Syntax;
 public static class TypeConst
 {
     public const string Pub = "pub";
+    public const string Switch = "switch";
+    public const string Default = "default";
     public const string Let = "let";
     public const string Void = "void";
     public const string Import = "import";

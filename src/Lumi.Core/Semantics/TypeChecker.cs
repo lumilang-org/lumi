@@ -25,6 +25,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
     private IReadOnlyList<ImportDeclarationNode> _currentImports = [];
     private string _currentModulePrefix = "";
     private int _loopDepth;
+    private int _switchDepth;
     public SemanticModel SemanticModel { get; } = new();
     private FunctionRegistry Functions => SemanticModel.Functions;
 
@@ -566,10 +567,14 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
                 break;
             }
+            case SwitchStatementNode switchStatement:
+                CheckSwitch(switchStatement, scope, expectedReturnType);
+                break;
+
             case BreakStatementNode breakStmt:
-                if (_loopDepth == 0)
+                if (_loopDepth == 0 && _switchDepth == 0)
                 {
-                    Report(DiagnosticCodes.BreakOutsideLoop, "'break' can only be used inside a loop.", breakStmt.Span);
+                    Report(DiagnosticCodes.BreakOutsideLoop, "'break' can only be used inside a loop or switch.", breakStmt.Span);
                 }
 
                 break;
@@ -778,6 +783,102 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
                 break;
             }
+        }
+    }
+
+    private void CheckSwitch(SwitchStatementNode node, SymbolTable scope, string expectedReturnType)
+    {
+        var subjectType = CheckExpression(node.Subject, scope);
+        EnsureValueExpression(node.Subject, subjectType);
+
+        var supported = subjectType == TypeConst.Error
+                        || TypePromoter.IsIntegerType(subjectType)
+                        || subjectType == TypeConst.Bool
+                        || subjectType == TypeConst.Char;
+
+        if (!supported)
+        {
+            Report(DiagnosticCodes.InvalidSwitch,
+                $"Cannot switch on type '{subjectType}'; use an integer, 'bool' or 'char'.",
+                node.Subject.Span);
+        }
+
+        var seen = new HashSet<string>();
+
+        _switchDepth++;
+
+        try
+        {
+            foreach (var arm in node.Arms)
+            {
+                foreach (var pattern in arm.Patterns)
+                {
+                    var patternType = CheckExpression(pattern, scope, supported ? subjectType : null);
+                    SemanticModel.SetExpressionType(pattern, patternType);
+
+                    if (!supported || patternType == TypeConst.Error)
+                    {
+                        continue;
+                    }
+
+                    string key;
+                    if (TryGetIntegerConstant(pattern, out var integer))
+                    {
+                        key = integer.ToString(CultureInfo.InvariantCulture);
+                    }
+                    else if (pattern is LiteralNode<char> character)
+                    {
+                        key = ((int)character.Value).ToString(CultureInfo.InvariantCulture);
+                    }
+                    else if (pattern is LiteralNode<bool> boolean)
+                    {
+                        key = boolean.Value ? "1" : "0";
+                    }
+                    else
+                    {
+                        Report(DiagnosticCodes.InvalidSwitch,
+                            "A switch case must be a constant integer, 'char' or 'bool' literal.",
+                            pattern.Span);
+                        continue;
+                    }
+
+                    if (!CanAssign(subjectType, patternType, pattern))
+                    {
+                        Report(DiagnosticCodes.TypeMismatch,
+                            $"Type Mismatch: Case of type '{patternType}' does not match switched type '{subjectType}'.",
+                            pattern.Span);
+                        continue;
+                    }
+
+                    // Character and integer cases share one key space only when types agree, which
+                    // CanAssign above guarantees.
+                    if (!seen.Add(key))
+                    {
+                        Report(DiagnosticCodes.DuplicateCase,
+                            $"Duplicate case value in switch.",
+                            pattern.Span);
+                    }
+                }
+
+                var armScope = new SymbolTable(scope);
+                foreach (var stmt in arm.Body)
+                {
+                    CheckStatement(stmt, armScope, expectedReturnType);
+                }
+            }
+
+            if (node.DefaultBody is not null)
+            {
+                var defaultScope = new SymbolTable(scope);
+                foreach (var stmt in node.DefaultBody)
+                {
+                    CheckStatement(stmt, defaultScope, expectedReturnType);
+                }
+            }
+        }
+        finally
+        {
+            _switchDepth--;
         }
     }
 

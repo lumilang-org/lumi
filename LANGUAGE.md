@@ -142,6 +142,21 @@ c.bump(2)
 - The receiver adapts to `self`: a struct variable passed to `*S self` has its address taken (it must be addressable, so not a temporary), and a `*S` passed to `S self` is dereferenced.
 - Each function is emitted as `<MangledStruct>__<name>`, e.g. `std_mem_Arena__reset`.
 
+### 7.4 `switch`
+
+```
+switch score {
+    10, 9 => println(1)
+    8 => { i32 bonus = 2 println(bonus) }
+    default => println(0)
+}
+```
+
+- The subject is evaluated once and must be an integer, `bool` or `char`.
+- Cases are constant integer, `char` or `bool` literals (negative integers allowed) that fit the subject type; a repeated value is `LUMI1017`, other misuse is `LUMI1018`.
+- An arm is one statement or a block with its own scope. There is no fall-through: after an arm the program continues after the `switch`. `break` leaves the `switch`; `continue` applies to the enclosing loop.
+- A `switch` with a `default` where every arm returns counts as returning.
+
 ### 2.3.2 Visibility (`pub`)
 
 Everything is private to its module unless marked `pub`: top-level `func`, `extern func` and `struct`,

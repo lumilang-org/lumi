@@ -10,6 +10,8 @@ public sealed class Lexer
         { TypeConst.Print, TokenType.PrintFunc },
         { TypeConst.Println, TokenType.PrintFunc },
         { TypeConst.Pub, TokenType.KeywordPub },
+        { TypeConst.Switch, TokenType.KeywordSwitch },
+        { TypeConst.Default, TokenType.KeywordDefault },
         { TypeConst.Let, TokenType.KeywordLet },
         { TypeConst.As, TokenType.KeywordAs },
         { TypeConst.In, TokenType.KeywordIn },
@@ -225,6 +227,12 @@ public sealed class Lexer
                 {
                     Advance();
                     return CreateToken(TokenType.EqualEqual, "==", start);
+                }
+
+                if (_currentChar == '>')
+                {
+                    Advance();
+                    return CreateToken(TokenType.FatArrow, "=>", start);
                 }
 
                 return CreateToken(TokenType.Assign, "=", start);

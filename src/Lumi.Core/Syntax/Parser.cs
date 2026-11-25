@@ -692,6 +692,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
                 return ParseIfStatement();
             case TokenType.KeywordWhile:
                 return ParseWhileStatement();
+            case TokenType.KeywordSwitch:
+                return ParseSwitchStatement();
             case TokenType.KeywordBreak:
             {
                 var token = Consume(TokenType.KeywordBreak);
@@ -849,6 +851,72 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             TokenType.TypeF64 or
             TokenType.TypeBool or
             TokenType.TypeChar;
+    }
+
+    private SwitchStatementNode ParseSwitchStatement()
+    {
+        var start = Consume(TokenType.KeywordSwitch);
+        var subject = ParseExpression();
+        Consume(TokenType.LBrace);
+
+        var arms = new List<SwitchArmNode>();
+        IReadOnlyList<StatementNode>? defaultBody = null;
+
+        while (Current.Type != TokenType.RBrace && Current.Type != TokenType.EndOfFile)
+        {
+            var armStart = Current;
+
+            if (Current.Type == TokenType.KeywordDefault)
+            {
+                Advance();
+                Consume(TokenType.FatArrow);
+                var body = ParseSwitchArmBody();
+
+                if (defaultBody is not null)
+                {
+                    Report(DiagnosticCodes.InvalidSwitch,
+                        "A switch can have only one 'default' arm.",
+                        armStart.Span);
+                }
+
+                defaultBody = body;
+                continue;
+            }
+
+            var patterns = new List<ExpressionNode> { ParseExpression() };
+            while (Current.Type == TokenType.Comma)
+            {
+                Advance();
+                patterns.Add(ParseExpression());
+            }
+
+            Consume(TokenType.FatArrow);
+            var armBody = ParseSwitchArmBody();
+
+            arms.Add(new SwitchArmNode(
+                patterns,
+                armBody,
+                CreateSpan(armStart.Span.Start, Peek(-1).Span.End)));
+        }
+
+        var end = Consume(TokenType.RBrace);
+
+        return new SwitchStatementNode(
+            subject,
+            arms,
+            defaultBody,
+            CreateSpan(start.Span.Start, end.Span.End));
+    }
+
+    // An arm body is a block or a single statement.
+    private IReadOnlyList<StatementNode> ParseSwitchArmBody()
+    {
+        if (Current.Type == TokenType.LBrace)
+        {
+            return ParseBlock(out _);
+        }
+
+        return [ParseStatement()];
     }
 
     private WhileStatementNode ParseWhileStatement()

@@ -3,6 +3,9 @@ namespace Lumi.Core.Syntax;
 public enum TokenType
 {
     KeywordPub,
+    KeywordSwitch,
+    KeywordDefault,
+    FatArrow,
     KeywordLet,
     KeywordAs,
     KeywordIn,
@@ -21,7 +24,6 @@ public enum TokenType
     KeywordElse,
     KeywordImport,
     KeywordModule,
-    PrintFunc,
 
     TypeBool,
     TypeVoid,
@@ -88,5 +90,8 @@ public enum TokenType
 
     //Special
     EndOfFile,
-    Unknown
+    Unknown,
+
+    //Builtin
+    PrintFunc
 }

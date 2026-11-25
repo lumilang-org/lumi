@@ -29,6 +29,11 @@ public sealed class ReturnAnalyzer
                 AlwaysReturns(ifStatement.ThenBody) &&
                 AlwaysReturns(ifStatement.ElseBody),
 
+            SwitchStatementNode switchStatement =>
+                switchStatement.DefaultBody is not null &&
+                AlwaysReturns(switchStatement.DefaultBody) &&
+                switchStatement.Arms.All(arm => AlwaysReturns(arm.Body)),
+
             _ => false
         };
     }

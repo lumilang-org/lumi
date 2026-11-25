@@ -177,6 +177,10 @@ public sealed partial class Codegen
 
                 break;
             }
+            case SwitchStatementNode switchStmt:
+                GenerateSwitchStatement(switchStmt);
+                break;
+
             case BreakStatementNode:
                 GenerateBreakStatement();
                 break;
@@ -404,6 +408,79 @@ public sealed partial class Codegen
         {
             _loopTargets.Pop();
             _currentScope = _currentScope.ExitScope();
+        }
+
+        _builder.PositionAtEnd(endBlock);
+    }
+
+    // The subject is evaluated once; arms never fall through, each one ends by branching to switch.end
+    private void GenerateSwitchStatement(SwitchStatementNode switchStmt)
+    {
+        var function = _builder.InsertBlock.Parent;
+        var subjectTypeName = _semanticModel.GetExpressionType(switchStmt.Subject);
+        var subject = GenerateExpression(switchStmt.Subject);
+        var subjectType = subject.TypeOf;
+
+        var armBlocks = switchStmt.Arms
+            .Select((_, i) => _context.AppendBasicBlock(function, $"switch.arm.{i}"))
+            .ToList();
+
+        var defaultBlock = switchStmt.DefaultBody is not null
+            ? _context.AppendBasicBlock(function, "switch.default")
+            : default;
+        var endBlock = _context.AppendBasicBlock(function, "switch.end");
+
+        var switchInst = _builder.BuildSwitch(
+            subject,
+            switchStmt.DefaultBody is not null ? defaultBlock : endBlock,
+            (uint)switchStmt.Arms.Sum(arm => arm.Patterns.Count));
+
+        for (var i = 0; i < switchStmt.Arms.Count; i++)
+        {
+            foreach (var pattern in switchStmt.Arms[i].Patterns)
+            {
+                var value = CastInitializer(
+                    GenerateExpression(pattern),
+                    pattern,
+                    subjectType,
+                    subjectTypeName,
+                    "switch_case");
+
+                switchInst.AddCase(value, armBlocks[i]);
+            }
+        }
+
+        // `break` leaves the switch; `continue` still targets the enclosing loop.
+        var continueTarget = _loopTargets.Count > 0 ? _loopTargets.Peek().ContinueTarget : endBlock;
+        _loopTargets.Push(new LoopTargets(endBlock, continueTarget));
+
+        try
+        {
+            for (var i = 0; i < switchStmt.Arms.Count; i++)
+            {
+                _builder.PositionAtEnd(armBlocks[i]);
+                GenerateScopedStatements(switchStmt.Arms[i].Body);
+
+                if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+                {
+                    _builder.BuildBr(endBlock);
+                }
+            }
+
+            if (switchStmt.DefaultBody is not null)
+            {
+                _builder.PositionAtEnd(defaultBlock);
+                GenerateScopedStatements(switchStmt.DefaultBody);
+
+                if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+                {
+                    _builder.BuildBr(endBlock);
+                }
+            }
+        }
+        finally
+        {
+            _loopTargets.Pop();
         }
 
         _builder.PositionAtEnd(endBlock);
