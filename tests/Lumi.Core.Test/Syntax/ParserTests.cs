@@ -657,4 +657,36 @@ func main() -> usize {
 
         Assert.That(diagnostics.HasErrors, Is.True);
     }
+
+    [Test]
+    public void Parse_ForIn_ProducesForInNode_AndKeepsClassicFor()
+    {
+        var program = Parse(@"
+func main() -> void {
+    i32[3] arr = [1, 2, 3]
+    for x in arr {
+        println(x)
+    }
+    for y in [4, 5] { println(y) }
+    for i32 j = 0; j < 2; j++ { println(j) }
+}");
+        var body = program.Functions[0].Body;
+
+        var forIn = (ForInStatementNode)body[1];
+        Assert.That(forIn.VariableName, Is.EqualTo("x"));
+        Assert.That(forIn.Iterable, Is.InstanceOf<IdentifierNode>());
+        Assert.That(forIn.Body, Has.Count.EqualTo(1));
+        Assert.That(((ForInStatementNode)body[2]).Iterable, Is.InstanceOf<ArrayLiteralNode>());
+        Assert.That(body[3], Is.InstanceOf<ForStatementNode>());
+    }
+
+    [Test]
+    public void Parse_ForIn_WithoutInOrBody_IsASyntaxError()
+    {
+        var diagnostics = new DiagnosticBag();
+        var tokens = new Lexer("func main() -> void { for x in { } }", diagnostics, "test.lumi").Tokenize();
+        new Parser(tokens, diagnostics, "test.lumi").ParseProgram();
+
+        Assert.That(diagnostics.HasErrors, Is.True);
+    }
 }

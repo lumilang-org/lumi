@@ -1371,4 +1371,58 @@ func main() -> void {
             Assert.That(CountCode(diagnostics, DiagnosticCodes.TypeMismatch), Is.GreaterThan(0), source);
         }
     }
+
+    [Test]
+    public void Check_ForIn_BindsTheElementType()
+    {
+        var (program, model, diagnostics) = Check(@"
+struct Pair { i32 a i32 b }
+struct Box { i64[2] vals }
+func main() -> void {
+    i32[3] arr = [1, 2, 3]
+    Pair[2] pairs = [Pair { a: 1, b: 2 }, Pair { a: 3, b: 4 }]
+    Box box = Box { vals: [1, 2] }
+    for x in arr {
+        i32 y = x + 1
+        for p in pairs {
+            i32 z = p.a + x
+            if z > 100 { break }
+            continue
+        }
+    }
+    for v in box.vals { i64 w = v }
+    for c in [1, 2] { println(c) }
+    for x in arr { println(x) }
+}");
+
+        Assert.That(diagnostics.HasErrors, Is.False,
+            string.Join("\n", diagnostics.Diagnostics.Select(d => d.Message)));
+        var body = program.Functions[0].Body;
+        Assert.That(model.GetType(body[3]), Is.EqualTo("i32"));
+        Assert.That(model.GetType(body[4]), Is.EqualTo("i64"));
+    }
+
+    [Test]
+    public void Check_ForIn_RejectsNonIterablesAndBadUses()
+    {
+        foreach (var source in new[]
+                 {
+                     "func main() -> void { i32 n = 3\n for x in n { } }",
+                     "func main() -> void { string s = \"ab\"\n for x in s { } }",
+                     "func main() -> void { *i32 p = nil\n for x in p { } }",
+                     "func main() -> void { for x in true { } }"
+                 })
+        {
+            var (_, _, diagnostics) = Check(source);
+
+            Assert.That(CountCode(diagnostics, DiagnosticCodes.TypeMismatch), Is.EqualTo(1), source);
+        }
+
+        // The loop variable is scoped to the loop and typed as the element.
+        var (_, _, outOfScope) = Check("func main() -> void { i32[2] a = [1, 2]\n for x in a { }\n println(x) }");
+        Assert.That(CountCode(outOfScope, DiagnosticCodes.UndefinedVariable), Is.EqualTo(1));
+
+        var (_, _, wrongType) = Check("func main() -> void { i32[2] a = [1, 2]\n for x in a { bool b = x } }");
+        Assert.That(CountCode(wrongType, DiagnosticCodes.TypeMismatch), Is.EqualTo(1));
+    }
 }

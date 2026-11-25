@@ -261,6 +261,10 @@ for u32 i = 0; i < 10; i = i + 1 {
 }
 ```
 
+### 7.3.1 `for ... in` Loops
+
+`for item in array { ... }` runs the body once per element of a fixed-size array, in order. `item` has the element type, is scoped to the loop, and is a copy: assigning to it does not change the array. The iterable can be a variable, field, element or an array literal; anything else (`i32`, `string`, pointers) is a `LUMI1002` error. `break` and `continue` work as in other loops.
+
 ### 7.4 Loop Jump Statements
 
 * `break`: Immediately exits the innermost loop.

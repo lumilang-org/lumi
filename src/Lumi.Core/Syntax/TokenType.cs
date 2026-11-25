@@ -4,6 +4,7 @@ public enum TokenType
 {
     KeywordLet,
     KeywordAs,
+    KeywordIn,
     KeywordSizeOf,
     KeywordAlignOf,
     KeywordExtern,

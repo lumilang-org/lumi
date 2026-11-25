@@ -11,6 +11,7 @@ public sealed class Lexer
         { "println", TokenType.PrintFunc },
         { TypeConst.Let, TokenType.KeywordLet },
         { TypeConst.As, TokenType.KeywordAs },
+        { TypeConst.In, TokenType.KeywordIn },
         { TypeConst.SizeOf, TokenType.KeywordSizeOf },
         { TypeConst.AlignOf, TokenType.KeywordAlignOf },
         { TypeConst.Extern, TokenType.KeywordExtern },

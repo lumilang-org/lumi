@@ -556,6 +556,46 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                 break;
             }
 
+            case ForInStatementNode forIn:
+            {
+                var iterableType = CheckExpression(forIn.Iterable, scope);
+                var elementType = TypeConst.Error;
+
+                if (IsArrayType(iterableType))
+                {
+                    ParseArrayType(iterableType, out elementType, out _);
+                }
+                else if (iterableType != TypeConst.Error)
+                {
+                    Report(DiagnosticCodes.TypeMismatch,
+                        $"Type '{iterableType}' is not iterable; 'for ... in' needs an array.",
+                        forIn.Iterable.Span);
+                }
+
+                // The loop variable lives in its own scope, around the body scope.
+                var loopScope = new SymbolTable(scope);
+                loopScope.TryDeclare(forIn.VariableName, elementType);
+                SemanticModel.SetType(forIn, elementType);
+
+                _loopDepth++;
+
+                try
+                {
+                    var bodyScope = new SymbolTable(loopScope);
+
+                    foreach (var stmt in forIn.Body)
+                    {
+                        CheckStatement(stmt, bodyScope, expectedReturnType);
+                    }
+                }
+                finally
+                {
+                    _loopDepth--;
+                }
+
+                break;
+            }
+
             case ForStatementNode forStatement:
             {
                 // The initializer variable must only exist within this loop.

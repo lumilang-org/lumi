@@ -357,4 +357,13 @@ public class LexerTests
         Assert.That(lexer.NextToken().Type, Is.EqualTo(TokenType.KeywordAlignOf));
         Assert.That(lexer.NextToken().Type, Is.EqualTo(TokenType.Identifier));
     }
+
+    [Test]
+    public void Lex_In_IsAKeyword()
+    {
+        var lexer = new Lexer("in index", new DiagnosticBag(), "test.lumi");
+
+        Assert.That(lexer.NextToken().Type, Is.EqualTo(TokenType.KeywordIn));
+        Assert.That(lexer.NextToken().Type, Is.EqualTo(TokenType.Identifier));
+    }
 }

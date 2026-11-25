@@ -191,6 +191,12 @@ public sealed partial class Codegen
                 break;
             }
 
+            case ForInStatementNode forIn:
+            {
+                GenerateForInStatement(forIn);
+                break;
+            }
+
             default:
             {
                 throw new NotSupportedException(
@@ -312,6 +318,95 @@ public sealed partial class Codegen
             // Restore the enclosing lexical scope.
             _currentScope = _currentScope.ExitScope();
         }
+    }
+
+    // for item in array: a hidden usize index runs 0..N; item is a copy of array[index].
+    private void GenerateForInStatement(ForInStatementNode forIn)
+    {
+        var arrayTypeName = _semanticModel.GetExpressionType(forIn.Iterable);
+        var arrayType = ResolveType(arrayTypeName);
+        var elementTypeName = _semanticModel.GetType(forIn);
+        var elementType = ResolveType(elementTypeName);
+        var length = arrayType.ArrayLength;
+
+        // The iterable is evaluated once, before the loop.
+        LLVMValueRef arrayPtr;
+        switch (forIn.Iterable)
+        {
+            case IdentifierNode or MemberAccessNode or IndexExpressionNode or DereferenceExpressionNode:
+                arrayPtr = ResolveTargetAddress(forIn.Iterable).Pointer;
+                break;
+            case ArrayLiteralNode literal:
+                arrayPtr = _builder.BuildAlloca(arrayType, "for.in.array");
+                EmitArrayLiteralElements(literal, arrayPtr, arrayType);
+                break;
+            default:
+                arrayPtr = _builder.BuildAlloca(arrayType, "for.in.array");
+                _builder.BuildStore(GenerateExpression(forIn.Iterable), arrayPtr);
+                break;
+        }
+
+        var indexPtr = _builder.BuildAlloca(_usizeType, "for.in.index");
+        _builder.BuildStore(LLVMValueRef.CreateConstInt(_usizeType, 0), indexPtr);
+
+        var function = _builder.InsertBlock.Parent;
+        var conditionBlock = _context.AppendBasicBlock(function, "for.cond");
+        var bodyBlock = _context.AppendBasicBlock(function, "for.body");
+        var latchBlock = _context.AppendBasicBlock(function, "for.latch");
+        var endBlock = _context.AppendBasicBlock(function, "for.end");
+
+        _builder.BuildBr(conditionBlock);
+
+        _builder.PositionAtEnd(conditionBlock);
+        var index = _builder.BuildLoad2(_usizeType, indexPtr, "for.in.i");
+        var inRange = _builder.BuildICmp(
+            LLVMIntPredicate.LLVMIntULT,
+            index,
+            LLVMValueRef.CreateConstInt(_usizeType, length),
+            "for.in.cond");
+        _builder.BuildCondBr(inRange, bodyBlock, endBlock);
+
+        _currentScope = _currentScope.EnterScope();
+        _loopTargets.Push(new LoopTargets(endBlock, latchBlock));
+
+        try
+        {
+            _builder.PositionAtEnd(bodyBlock);
+
+            var elementPtr = _builder.BuildGEP2(
+                arrayType,
+                arrayPtr,
+                new[] { LLVMValueRef.CreateConstInt(_context.Int32Type, 0), index },
+                "for.in.element");
+
+            var variable = _builder.BuildAlloca(elementType, forIn.VariableName);
+            _builder.BuildStore(_builder.BuildLoad2(elementType, elementPtr, "for.in.item"), variable);
+            _currentScope.Declare(
+                forIn.VariableName,
+                new VariableSymbol(elementTypeName, elementType, variable));
+
+            GenerateScopedStatements(forIn.Body);
+
+            if (!HasTerminator(_builder.InsertBlock))
+            {
+                _builder.BuildBr(latchBlock);
+            }
+
+            _builder.PositionAtEnd(latchBlock);
+            var next = _builder.BuildAdd(
+                _builder.BuildLoad2(_usizeType, indexPtr, "for.in.i"),
+                LLVMValueRef.CreateConstInt(_usizeType, 1),
+                "for.in.next");
+            _builder.BuildStore(next, indexPtr);
+            _builder.BuildBr(conditionBlock);
+        }
+        finally
+        {
+            _loopTargets.Pop();
+            _currentScope = _currentScope.ExitScope();
+        }
+
+        _builder.PositionAtEnd(endBlock);
     }
 
     private void GenerateWhileStatement(WhileStatementNode whileStmt)

@@ -722,9 +722,24 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         }
     }
 
-    private ForStatementNode ParseForStatement()
+    private StatementNode ParseForStatement()
     {
         var start = Consume(TokenType.KeywordFor);
+
+        // for item in iterable { ... }
+        if (Current.Type == TokenType.Identifier && Next.Type == TokenType.KeywordIn)
+        {
+            var variableName = Consume(TokenType.Identifier).Value;
+            Consume(TokenType.KeywordIn);
+            var iterable = ParseExpression();
+            var loopBody = ParseBlock(out var loopBodySpan);
+
+            return new ForInStatementNode(
+                variableName,
+                iterable,
+                loopBody,
+                CreateSpan(start.Span.Start, loopBodySpan.End));
+        }
 
         StatementNode? initializer = null;
 
