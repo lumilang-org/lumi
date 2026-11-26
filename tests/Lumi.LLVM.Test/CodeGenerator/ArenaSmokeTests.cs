@@ -12,8 +12,8 @@ public class ArenaSmokeTests
 import std::mem
 func main() -> void {
     std::mem::Arena arena
-    std::mem::arena_init(&arena, 16)
-    std::mem::arena_destroy(&arena)
+    arena.init(16)
+    arena.destroy()
 }");
 
         Assert.Contains("declare ptr @malloc(i64", ir);
@@ -29,12 +29,12 @@ func main() -> void {
 import std::mem
 func main() -> void {
     std::mem::Arena arena
-    println(std::mem::arena_init(&arena, 64))
+    println(arena.init(64))
     println(arena.head != nil)
     println(arena.block_capacity)
 
-    *u8 a = std::mem::arena_alloc(&arena, 10, 1)
-    *u8 b = std::mem::arena_alloc(&arena, 8, 8)
+    *u8 a = arena.alloc(10, 1)
+    *u8 b = arena.alloc(8, 8)
     println(a != nil)
     println(b != nil)
     println(b == a + 16)
@@ -45,13 +45,13 @@ func main() -> void {
     println(*b)
     println(*(a + 16))
 
-    println(std::mem::arena_alloc(&arena, 8, 0) == nil)
-    println(std::mem::arena_alloc(&arena, 8, 3) == nil)
+    println(arena.alloc(8, 0) == nil)
+    println(arena.alloc(8, 3) == nil)
 
-    std::mem::arena_reset(&arena)
-    println(std::mem::arena_alloc(&arena, 4, 4) == a)
+    arena.reset()
+    println(arena.alloc(4, 4) == a)
 
-    std::mem::arena_destroy(&arena)
+    arena.destroy()
     println(arena.head == nil)
     println(arena.current == nil)
     println(arena.block_capacity)
@@ -70,10 +70,10 @@ func main() -> void {
 import std::mem
 func main() -> void {
     std::mem::Arena arena
-    println(std::mem::arena_init(&arena, 0))
+    println(arena.init(0))
     println(arena.head == nil)
-    println(std::mem::arena_alloc(&arena, 1, 1) == nil)
-    std::mem::arena_destroy(&arena)
+    println(arena.alloc(1, 1) == nil)
+    arena.destroy()
     println(arena.head == nil)
 }"));
 
@@ -88,24 +88,24 @@ func main() -> void {
 import std::mem
 func main() -> void {
     std::mem::Arena arena
-    std::mem::arena_init(&arena, 16)
-    *u8 a = std::mem::arena_alloc(&arena, 8, 8)
-    *u8 b = std::mem::arena_alloc(&arena, 8, 8)
+    arena.init(16)
+    *u8 a = arena.alloc(8, 8)
+    *u8 b = arena.alloc(8, 8)
     println(b == a + 8)
     println(arena.head == arena.current)
 
-    *u8 c = std::mem::arena_alloc(&arena, 8, 8)
+    *u8 c = arena.alloc(8, 8)
     println(c != nil)
     println(arena.head == arena.current)
     println(arena.head.next == arena.current)
 
-    *u8 big = std::mem::arena_alloc(&arena, 100, 1)
+    *u8 big = arena.alloc(100, 1)
     println(big != nil)
     println(arena.current.capacity)
     *c = 5
     *big = 6
     println(*c + *big)
-    std::mem::arena_destroy(&arena)
+    arena.destroy()
 }"));
 
         if (output is null) return;

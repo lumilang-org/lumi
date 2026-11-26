@@ -543,6 +543,10 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
                 break;
 
+            case TupleDestructuringNode destructuring:
+                CheckTupleDestructuring(destructuring, scope);
+                break;
+
             case ExpressionStatementNode exprStmt:
                 CheckExpression(exprStmt.Expression, scope);
                 break;
@@ -988,6 +992,128 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         }
     }
 
+    // (a, b): each element takes the matching element type of the expected tuple type, when
+    // there is one; otherwise plain integer literals default to i32.
+    private string CheckTupleLiteral(TupleLiteralNode tuple, SymbolTable scope, string? expectedType)
+    {
+        var expected = expectedType is not null
+                       && TupleTypes.IsTuple(expectedType)
+                       && TupleTypes.Elements(expectedType).Count == tuple.Elements.Count
+            ? TupleTypes.Elements(expectedType)
+            : null;
+
+        var types = new List<string>();
+        for (var i = 0; i < tuple.Elements.Count; i++)
+        {
+            var element = tuple.Elements[i];
+            var isIntegerLiteral = element is LiteralNode<string>
+                or UnaryExpressionNode { Operator: "-", Operand: LiteralNode<string> };
+
+            var type = CheckExpression(
+                element,
+                scope,
+                expected?[i] ?? (isIntegerLiteral ? TypeConst.I32 : null));
+
+            if (expected is null && isIntegerLiteral && type is TypeConst.I8 or TypeConst.I16)
+            {
+                type = TypeConst.I32;
+            }
+
+            SemanticModel.SetExpressionType(element, type);
+            EnsureValueExpression(element, type);
+
+            if (type == TypeConst.Nil)
+            {
+                Report(DiagnosticCodes.TypeMismatch,
+                    "Cannot infer a tuple element type from 'nil'.", element.Span);
+                type = TypeConst.Error;
+            }
+
+            if (expected is not null && type != TypeConst.Error && expected[i] != type
+                && !CanAssign(expected[i], type, element))
+            {
+                Report(DiagnosticCodes.TypeMismatch,
+                    $"Type Mismatch: Tuple element {i + 1} expects '{expected[i]}', but got '{type}'.",
+                    element.Span);
+                type = TypeConst.Error;
+            }
+            else if (expected is not null && type != TypeConst.Error)
+            {
+                type = expected[i];
+            }
+
+            types.Add(type);
+        }
+
+        return types.Contains(TypeConst.Error) ? TypeConst.Error : TupleTypes.Make(types);
+    }
+
+    // let (a, (b, _)) = expr
+    private void CheckTupleDestructuring(TupleDestructuringNode node, SymbolTable scope)
+    {
+        var type = CheckExpression(node.Initializer, scope);
+        EnsureValueExpression(node.Initializer, type);
+        SemanticModel.SetType(node.Pattern, type);
+
+        if (type != TypeConst.Error && !TupleTypes.IsTuple(type))
+        {
+            Report(DiagnosticCodes.TypeMismatch,
+                $"Cannot destructure type '{type}'; the right-hand side must be a tuple.",
+                node.Initializer.Span);
+            type = TypeConst.Error;
+        }
+
+        var seen = new HashSet<string>();
+        BindTuplePattern(node.Pattern, type, scope, seen);
+    }
+
+    private void BindTuplePattern(TuplePatternNode pattern, string type, SymbolTable scope, HashSet<string> seen)
+    {
+        SemanticModel.SetType(pattern, type);
+
+        if (pattern.IsLeaf)
+        {
+            if (pattern.Name == "_" || type == TypeConst.Error)
+            {
+                return;
+            }
+
+            if (!seen.Add(pattern.Name!) || !scope.TryDeclare(pattern.Name!, type))
+            {
+                Report(DiagnosticCodes.DuplicateVariable,
+                    $"Variable '{pattern.Name}' is already declared in this scope.",
+                    pattern.Span);
+            }
+
+            return;
+        }
+
+        IReadOnlyList<string>? elementTypes = null;
+        if (type != TypeConst.Error)
+        {
+            if (!TupleTypes.IsTuple(type))
+            {
+                Report(DiagnosticCodes.TypeMismatch,
+                    $"Cannot destructure type '{type}' as a tuple.", pattern.Span);
+            }
+            else if (TupleTypes.Elements(type).Count != pattern.Elements!.Count)
+            {
+                Report(DiagnosticCodes.TypeMismatch,
+                    $"Tuple pattern has {pattern.Elements.Count} elements, but the tuple '{type}' has {TupleTypes.Elements(type).Count}.",
+                    pattern.Span);
+            }
+            else
+            {
+                elementTypes = TupleTypes.Elements(type);
+            }
+        }
+
+        for (var i = 0; i < pattern.Elements!.Count; i++)
+        {
+            BindTuplePattern(pattern.Elements[i], elementTypes?[i] ?? TypeConst.Error, scope, seen);
+        }
+    }
+
     private EnumVariantNode? FindVariant(string enumName, string variantName)
     {
         return _enums[enumName].Variants.FirstOrDefault(v => v.Name == variantName);
@@ -1418,6 +1544,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             FunctionCallExpressionNode functionCall => CheckFunctionCall(functionCall, scope),
             StructLiteralNode structLiteral => CheckStructLiteral(structLiteral, scope),
             EnumStructLiteralNode enumLiteral => CheckEnumStructVariant(enumLiteral, scope),
+            TupleLiteralNode tuple => CheckTupleLiteral(tuple, scope, expectedType),
             MemberAccessNode memberAccess => CheckMemberAccess(memberAccess, scope),
 
             _ => throw new Exception(
@@ -1537,6 +1664,29 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         if (PointerTypes.IsPointer(targetType))
         {
             targetType = PointerTypes.Pointee(targetType);
+        }
+
+        // t.0, t.1: element access on a tuple (or a pointer to one).
+        if (TupleTypes.IsTuple(targetType))
+        {
+            var elements = TupleTypes.Elements(targetType);
+            if (!int.TryParse(memberAccess.MemberName, NumberStyles.None, CultureInfo.InvariantCulture, out var index))
+            {
+                Report(DiagnosticCodes.TypeMismatch,
+                    $"Tuple '{targetType}' has no member '{memberAccess.MemberName}'; use a numeric index such as '.0'.",
+                    memberAccess.Span);
+                return TypeConst.Error;
+            }
+
+            if (index >= elements.Count)
+            {
+                Report(DiagnosticCodes.IndexOutOfBounds,
+                    $"Tuple index {index} is out of range for '{targetType}', which has {elements.Count} elements.",
+                    memberAccess.Span);
+                return TypeConst.Error;
+            }
+
+            return elements[index];
         }
 
         if (IsArrayType(targetType))
@@ -2543,6 +2693,22 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             return;
         }
 
+        if (TupleTypes.IsTuple(type))
+        {
+            foreach (var element in TupleTypes.Elements(type))
+            {
+                if (element == TypeConst.Void)
+                {
+                    Report(DiagnosticCodes.TypeMismatch, "A tuple element cannot be 'void'.", span);
+                    continue;
+                }
+
+                ValidateType(element, span);
+            }
+
+            return;
+        }
+
         if (TypePromoter.IsIntegerType(type) ||
             IsFloatingPointType(type) ||
             type == TypeConst.Bool ||
@@ -2580,6 +2746,11 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         if (PointerTypes.IsPointer(type))
         {
             return PointerTypes.To(ResolveType(PointerTypes.Pointee(type)));
+        }
+
+        if (TupleTypes.IsTuple(type))
+        {
+            return TupleTypes.Make(TupleTypes.Elements(type).Select(ResolveType));
         }
 
         if (TypePromoter.IsIntegerType(type) ||

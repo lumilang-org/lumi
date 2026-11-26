@@ -81,6 +81,10 @@ public sealed partial class Codegen
                 break;
             }
 
+            case TupleDestructuringNode destructuring:
+                GenerateTupleDestructuring(destructuring);
+                break;
+
             case ExpressionStatementNode exprStmt:
                 GenerateExpression(exprStmt.Expression);
                 break;

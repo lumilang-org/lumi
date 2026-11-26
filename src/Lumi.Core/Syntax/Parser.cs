@@ -89,6 +89,38 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         };
     }
 
+    // `-> Type`; a function without an arrow returns void.
+    private string ParseOptionalReturnType()
+    {
+        if (Current.Type != TokenType.Arrow)
+        {
+            return TypeConst.Void;
+        }
+
+        Consume(TokenType.Arrow);
+
+        if (Current.Type != TokenType.TypeVoid &&
+            !IsTypeToken(Current.Type) &&
+            Current.Type != TokenType.Identifier &&
+            Current.Type != TokenType.LParen &&
+            Current.Type != TokenType.Star)
+        {
+            Report(
+                DiagnosticCodes.ExpectedToken,
+                $"Syntax Error: Expected return type, got {Current.Type} ('{Current.Value}') at position {_position}",
+                Current.Span);
+            throw new ParseException();
+        }
+
+        var returnType = Current.Type == TokenType.TypeVoid ? TypeConst.Void : ParseTypeName();
+        if (returnType == TypeConst.Void)
+        {
+            Advance();
+        }
+
+        return returnType;
+    }
+
     private ExternFunctionDeclarationNode ParseExternFunction()
     {
         var visibility = VisibilityModifier.Private;
@@ -109,25 +141,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         var parameters = ParseFunctionParameters();
         Consume(TokenType.RParen);
 
-        Consume(TokenType.Arrow);
-
-        if (Current.Type != TokenType.TypeVoid &&
-            !IsTypeToken(Current.Type) &&
-            Current.Type != TokenType.Identifier &&
-            Current.Type != TokenType.Star)
-        {
-            Report(
-                DiagnosticCodes.ExpectedToken,
-                $"Syntax Error: Expected return type, got {Current.Type} ('{Current.Value}') at position {_position}",
-                Current.Span);
-            throw new ParseException();
-        }
-
-        var returnType = Current.Type == TokenType.TypeVoid ? "void" : ParseTypeName();
-        if (returnType == TypeConst.Void)
-        {
-            Advance();
-        }
+        var returnType = ParseOptionalReturnType();
 
         if (Current.Type == TokenType.LBrace)
         {
@@ -169,25 +183,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         var parameters = ParseFunctionParameters();
 
         Consume(TokenType.RParen);
-        Consume(TokenType.Arrow);
-
-        if (Current.Type != TokenType.TypeVoid &&
-            !IsTypeToken(Current.Type) &&
-            Current.Type != TokenType.Identifier &&
-            Current.Type != TokenType.Star)
-        {
-            Report(
-                DiagnosticCodes.ExpectedToken,
-                $"Syntax Error: Expected return type, got {Current.Type} ('{Current.Value}') at position {_position}",
-                Current.Span);
-            throw new ParseException();
-        }
-
-        var returnType = Current.Type == TokenType.TypeVoid ? TypeConst.Void : ParseTypeName();
-        if (returnType == TypeConst.Void)
-        {
-            Advance();
-        }
+        var returnType = ParseOptionalReturnType();
 
         Consume(TokenType.LBrace);
 
@@ -368,6 +364,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
             if (!IsTypeToken(Current.Type) &&
                 Current.Type != TokenType.Identifier &&
+                Current.Type != TokenType.LParen &&
                 Current.Type != TokenType.Star)
             {
                 Report(
@@ -593,12 +590,36 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
         string typeName;
 
-        if (pointerDepth > 0 && Current.Type == TokenType.LParen)
+        if (Current.Type == TokenType.LParen)
         {
-            // *(i32[3]): a pointer to an array type.
-            Consume(TokenType.LParen);
-            typeName = ParseTypeName();
+            // *(i32[3]) is a pointer to an array type; (A, B) is a tuple type.
+            var open = Consume(TokenType.LParen);
+            var elements = new List<string> { ParseTypeName() };
+
+            while (Current.Type == TokenType.Comma)
+            {
+                Consume(TokenType.Comma);
+                elements.Add(ParseTypeName());
+            }
+
             Consume(TokenType.RParen);
+
+            if (elements.Count > 1)
+            {
+                typeName = TupleTypes.Make(elements);
+            }
+            else if (pointerDepth > 0)
+            {
+                typeName = elements[0];
+            }
+            else
+            {
+                Report(
+                    DiagnosticCodes.ExpectedToken,
+                    "Syntax Error: A tuple type needs at least two elements.",
+                    open.Span);
+                throw new ParseException();
+            }
         }
         else
         {
@@ -684,6 +705,35 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         if (offset == 0 && (IsTypeToken(Current.Type) || Current.Type == TokenType.KeywordLet))
         {
             return true;
+        }
+
+        // `(A, B) name`: a tuple type, told apart from a grouped expression by its comma.
+        if (offset == 0 && Current.Type == TokenType.LParen)
+        {
+            var depth = 0;
+            var hasComma = false;
+            var i = 0;
+            do
+            {
+                switch (Peek(i).Type)
+                {
+                    case TokenType.LParen:
+                        depth++;
+                        break;
+                    case TokenType.RParen:
+                        depth--;
+                        break;
+                    case TokenType.Comma when depth == 1:
+                        hasComma = true;
+                        break;
+                    case TokenType.EndOfFile:
+                        return false;
+                }
+
+                i++;
+            } while (depth > 0);
+
+            return hasComma && IsTypeSuffixThenName(i);
         }
 
         // `*(T) name`: skip the parenthesised pointee type.
@@ -782,8 +832,55 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         return false;
     }
 
+    private TupleDestructuringNode ParseTupleDestructuring()
+    {
+        var start = Consume(TokenType.KeywordLet);
+        var pattern = ParseTuplePattern();
+        Consume(TokenType.Assign);
+        var initializer = ParseExpression();
+
+        return new TupleDestructuringNode(
+            pattern,
+            initializer,
+            CreateSpan(start.Span.Start, initializer.Span!.End));
+    }
+
+    private TuplePatternNode ParseTuplePattern()
+    {
+        var open = Consume(TokenType.LParen);
+        var elements = new List<TuplePatternNode>();
+
+        while (Current.Type != TokenType.RParen && Current.Type != TokenType.EndOfFile)
+        {
+            if (Current.Type == TokenType.LParen)
+            {
+                elements.Add(ParseTuplePattern());
+            }
+            else
+            {
+                var name = Consume(TokenType.Identifier);
+                elements.Add(new TuplePatternNode(name.Value, null, name.Span));
+            }
+
+            if (Current.Type != TokenType.Comma)
+            {
+                break;
+            }
+
+            Consume(TokenType.Comma);
+        }
+
+        var close = Consume(TokenType.RParen);
+        return new TuplePatternNode(null, elements, CreateSpan(open.Span.Start, close.Span.End));
+    }
+
     private StatementNode ParseStatement()
     {
+        if (Current.Type == TokenType.KeywordLet && Peek(1).Type == TokenType.LParen)
+        {
+            return ParseTupleDestructuring();
+        }
+
         if (IsVariableDeclaration())
         {
             return ParseVariableDeclaration();
@@ -1284,6 +1381,31 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         Consume(TokenType.Dot);
 
         var memberToken = Current;
+
+        // t.0 and t.0.1: tuple element access. The lexer reads `0.1` as one number, so split it.
+        if (memberToken.Type == TokenType.Number)
+        {
+            Advance();
+            var indices = memberToken.Value.Split('.');
+            if (indices.Any(part => part.Length == 0))
+            {
+                Report(DiagnosticCodes.UnexpectedToken,
+                    $"Syntax Error: '{memberToken.Value}' is not a valid tuple index.", memberToken.Span);
+                throw new ParseException();
+            }
+
+            MemberAccessNode access = null!;
+            foreach (var index in indices)
+            {
+                access = new MemberAccessNode(
+                    access ?? target,
+                    index,
+                    CreateSpan(target.Span!.Start, memberToken.Span.End));
+            }
+
+            return access;
+        }
+
         var memberName = memberToken.Value;
         Consume(TokenType.Identifier);
 
@@ -1348,9 +1470,28 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
     private ExpressionNode ParseGroupedExpression()
     {
-        Consume(TokenType.LParen);
+        var open = Consume(TokenType.LParen);
 
         var expression = ParseExpression();
+
+        if (Current.Type == TokenType.Comma)
+        {
+            // (a, b, ...) is a tuple; (a) is only grouping.
+            var elements = new List<ExpressionNode> { expression };
+            while (Current.Type == TokenType.Comma)
+            {
+                Consume(TokenType.Comma);
+                if (Current.Type == TokenType.RParen)
+                {
+                    break;
+                }
+
+                elements.Add(ParseExpression());
+            }
+
+            var close = Consume(TokenType.RParen);
+            return new TupleLiteralNode(elements, CreateSpan(open.Span.Start, close.Span.End));
+        }
 
         Consume(TokenType.RParen);
 

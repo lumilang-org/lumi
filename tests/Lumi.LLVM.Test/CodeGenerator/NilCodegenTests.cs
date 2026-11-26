@@ -294,8 +294,8 @@ func main() -> void {
 import std::mem
 func main() -> void {
     std::mem::Arena arena
-    std::mem::arena_init(&arena, 64)
-    *u8 a = std::mem::arena_alloc(&arena, 24, 8)
+    arena.init(64)
+    *u8 a = arena.alloc(24, 8)
     usize off = 16
     *u8 b = a + off
     println(b as usize - a as usize)
@@ -305,7 +305,7 @@ func main() -> void {
     **i32 pp = &slots[0]
     usize one = 1
     println((pp + one) as usize - pp as usize)
-    std::mem::arena_destroy(&arena)
+    arena.destroy()
 }"));
 
         if (output is null) return;
@@ -358,8 +358,8 @@ func main() -> void {
 import std::mem
 func main() -> void {
     std::mem::Arena arena
-    std::mem::arena_init(&arena, 64)
-    let nums = std::mem::arena_alloc(&arena, sizeof(i64) * 4, alignof(i64)) as *i64
+    arena.init(64)
+    let nums = arena.alloc(sizeof(i64) * 4, alignof(i64)) as *i64
     usize i = 0
     while i < 4 {
         nums[i] = (i as i64) * 100
@@ -371,7 +371,7 @@ func main() -> void {
     println(nums[3])
     println(bytes[0])
     println(nums[1] + nums[2])
-    std::mem::arena_destroy(&arena)
+    arena.destroy()
 }"));
 
         if (output is null) return;

@@ -193,15 +193,11 @@ public sealed class Lexer
             Advance();
         }
 
-        if (!IsAtEnd() && _currentChar == '.')
+        // A '.' only belongs to the number when a digit follows; otherwise it is member access
+        // (`tuple.3.x` reads the number 3, then `.x`).
+        if (!IsAtEnd() && _currentChar == '.' && char.IsDigit(Peek()))
         {
             Advance();
-
-            if (IsAtEnd() || !char.IsDigit(_currentChar))
-            {
-                throw new Exception(
-                    "Syntax Error: Expected a digit after decimal point.");
-            }
 
             while (!IsAtEnd() && char.IsDigit(_currentChar))
             {

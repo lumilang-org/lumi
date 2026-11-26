@@ -42,8 +42,8 @@ func main() -> void {
     println(flag)
 
     std::mem::Arena arena
-    std::mem::arena_init(&arena, 64)
-    let raw = std::mem::arena_alloc(&arena, sizeof(Entity), alignof(Entity))
+    arena.init(64)
+    let raw = arena.alloc(sizeof(Entity), alignof(Entity))
     let e = raw as *Entity
     e.id = 7
     e.hp = 100
@@ -54,7 +54,7 @@ func main() -> void {
     println(pair.hp)
     let big: i64 = 5000000000
     println(big)
-    std::mem::arena_destroy(&arena)
+    arena.destroy()
 }"));
 
         if (output is null) return;

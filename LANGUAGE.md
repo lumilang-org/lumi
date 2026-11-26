@@ -121,6 +121,8 @@ Lexical scoping applies to all variables declared inside blocks (`{ ... }`), `if
 
 ---
 
+The `-> Type` part of a function (including `extern` and struct functions) is optional: `func main() { }` is `func main() -> void { }`.
+
 ### 2.3.1 Functions inside structs
 
 A `func` can be declared inside a struct body next to the fields. It does not change the struct's size or layout.
@@ -156,6 +158,24 @@ switch score {
 - Cases are constant integer, `char` or `bool` literals (negative integers allowed) that fit the subject type; a repeated value is `LUMI1017`, other misuse is `LUMI1018`.
 - An arm is one statement or a block with its own scope. There is no fall-through: after an arm the program continues after the `switch`. `break` leaves the `switch`; `continue` applies to the enclosing loop.
 - A `switch` with a `default` where every arm returns counts as returning.
+
+### 2.3.3 Tuples
+
+```
+func divmod(i32 a, i32 b) -> (i32, i32) {
+    return (a / b, a - (a / b) * b)
+}
+
+let (q, r) = divmod(17, 5)          // q = 3, r = 2
+let (a, (flag, _)) = (1, (true, 9)) // nested patterns, `_` discards
+(i64, u8) pair = (7, 8)             // literal elements take the declared element types
+```
+
+- A tuple type `(T1, T2, ...)` has at least two elements and can be used wherever a type can: returns, parameters, variables, struct fields, arrays (`(i32, i32)[3]`) and pointers (`*(i32, i32)`). `(e)` is only grouping.
+- Without a declared type, plain integer literals in a tuple default to `i32`.
+- `let (pattern) = expr` needs a tuple of the same arity; each name gets its element's type and must be unique. A mismatch is `LUMI1002`, a repeated name `LUMI1007`.
+- Elements are also reachable by index, for reads and writes: `t.0`, `t.1`, `nested.1.0`, `p.0` (through a `*(A, B)`), `f().1`. The index must be a literal within range (`LUMI1012` otherwise), and the element keeps its own type.
+- Layout is the LLVM struct `{ T1, T2, ... }`, so `sizeof`/`alignof` follow the usual aggregate rules.
 
 ### 2.4 Enums
 

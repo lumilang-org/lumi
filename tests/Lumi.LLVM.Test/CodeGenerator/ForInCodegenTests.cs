@@ -73,10 +73,10 @@ func main() -> void {
 import std::mem
 func main() -> void {
     std::mem::Arena arena
-    std::mem::arena_init(&arena, 64)
+    arena.init(64)
     *i32[2] ptrs = [nil, nil]
     for p in ptrs { println(p == nil) }
-    std::mem::arena_destroy(&arena)
+    arena.destroy()
     for i in [1, 2, 3] { if i == 2 { break } }
     println(1)
 }"));

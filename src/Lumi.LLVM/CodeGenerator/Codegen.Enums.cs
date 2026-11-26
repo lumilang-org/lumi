@@ -57,7 +57,7 @@ public sealed partial class Codegen
                 EnsureSized(fieldType);
             }
 
-            var payload = LLVMTypeRef.CreateStruct(
+            var payload = _context.GetStructType(
                 fieldTypes.Select(ResolveType).ToArray(), false);
 
             if (fieldTypes.Count > 0)

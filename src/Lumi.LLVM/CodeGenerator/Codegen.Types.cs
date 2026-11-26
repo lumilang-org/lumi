@@ -29,6 +29,13 @@ public sealed partial class Codegen
             return LLVMTypeRef.CreatePointer(_context.Int8Type, 0);
         }
 
+        // (A, B) is an anonymous aggregate { A, B }.
+        if (TupleTypes.IsTuple(typeName))
+        {
+            return _context.GetStructType(
+                TupleTypes.Elements(typeName).Select(ResolveType).ToArray(), false);
+        }
+
         if (_enumLayouts.TryGetValue(typeName, out var enumLayout))
         {
             return enumLayout.Type;

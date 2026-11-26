@@ -52,8 +52,8 @@ import std::mem
 struct Pair { u64 a u64 b }
 func main() -> void {
     std::mem::Arena arena
-    std::mem::arena_init(&arena, 64)
-    *Pair p = std::mem::arena_alloc(&arena, sizeof(Pair), alignof(Pair)) as *Pair
+    arena.init(64)
+    *Pair p = arena.alloc(sizeof(Pair), alignof(Pair)) as *Pair
     (*p).b = 3
     println((*p).b)
     println(arena.head.offset)

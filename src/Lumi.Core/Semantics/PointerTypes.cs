@@ -16,7 +16,9 @@ public static class PointerTypes
     {
         var pointee = pointerType[1..];
 
+        // `*(i32[3])` wraps the pointee in parentheses; `*(i32, i32)` is a pointer to a tuple.
         return pointee.Length > 2 && pointee[0] == '(' && pointee[^1] == ')'
+               && !TupleTypes.HasTopLevelComma(pointee[1..^1])
             ? pointee[1..^1]
             : pointee;
     }

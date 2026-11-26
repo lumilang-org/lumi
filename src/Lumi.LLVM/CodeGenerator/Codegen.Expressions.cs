@@ -37,6 +37,7 @@ public sealed partial class Codegen
             // Pointers are opaque, so one null constant serves every pointer type.
             NilLiteralNode => LLVMValueRef.CreateConstPointerNull(ResolveType(PointerTypes.To(TypeConst.U8))),
             LiteralNode<bool> boolean => LLVMValueRef.CreateConstInt(_context.Int1Type, (ulong)(boolean.Value ? 1 : 0)),
+            TupleLiteralNode tuple => GenerateTupleLiteral(tuple),
             EnumStructLiteralNode enumLiteral => GenerateEnumStructConstruction(enumLiteral),
             MethodCallExpressionNode { } enumCall when _semanticModel.IsEnumConstruction(enumCall) =>
                 GenerateEnumConstruction(enumCall, enumCall.MethodName, enumCall.Arguments),
@@ -176,8 +177,30 @@ public sealed partial class Codegen
         return _builder.BuildLoad2(elementType, ptr, "index_load");
     }
 
+    // Whether the expression names memory (a variable, field, element or dereference).
+    private bool IsStoredLocation(ExpressionNode expression)
+    {
+        return expression switch
+        {
+            IdentifierNode or DereferenceExpressionNode or IndexExpressionNode => true,
+            MemberAccessNode member => PointerTypes.IsPointer(_semanticModel.GetExpressionType(member.Target))
+                                       || IsStoredLocation(member.Target),
+            _ => false
+        };
+    }
+
     private LLVMValueRef GenerateMemberAccess(MemberAccessNode member)
     {
+        // An element of a tuple that is not stored anywhere (pair().0) is extracted by value.
+        var receiverType = _semanticModel.GetExpressionType(member.Target);
+        if (TupleTypes.IsTuple(receiverType) && !IsStoredLocation(member.Target))
+        {
+            return _builder.BuildExtractValue(
+                GenerateExpression(member.Target),
+                uint.Parse(member.MemberName),
+                "tuple.element");
+        }
+
         var (fieldPtr, _, fieldLlvmType) = ResolveTargetAddress(member);
         return _builder.BuildLoad2(fieldLlvmType, fieldPtr, $"load_{member.MemberName}");
     }
@@ -360,6 +383,17 @@ public sealed partial class Codegen
                 else
                 {
                     (basePtr, baseLumiType, _) = ResolveTargetAddress(member.Target);
+                }
+
+                if (TupleTypes.IsTuple(baseLumiType))
+                {
+                    var index = uint.Parse(member.MemberName);
+                    var elementType = TupleTypes.Elements(baseLumiType)[(int)index];
+
+                    return (
+                        _builder.BuildStructGEP2(ResolveType(baseLumiType), basePtr, index, $"tuple.{index}.ptr"),
+                        elementType,
+                        ResolveType(elementType));
                 }
 
                 if (!_structLayouts.TryGetValue(baseLumiType, out var layout))

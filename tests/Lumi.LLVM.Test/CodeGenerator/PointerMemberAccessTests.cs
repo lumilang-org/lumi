@@ -49,12 +49,12 @@ struct Vec2 { i32 x i32 y }
 struct Entity { Vec2 pos i32 hp i32 id i32 flags }
 func main() -> void {
     std::mem::Arena arena
-    std::mem::arena_init(&arena, 128)
-    *Entity ent = std::mem::arena_alloc(&arena, sizeof(Entity), alignof(Entity)) as *Entity
+    arena.init(128)
+    *Entity ent = arena.alloc(sizeof(Entity), alignof(Entity)) as *Entity
     ent.pos.x = 1
     ent.pos.y = 2
     ent.hp = 100
-    *Entity other = std::mem::arena_alloc(&arena, sizeof(Entity), alignof(Entity)) as *Entity
+    *Entity other = arena.alloc(sizeof(Entity), alignof(Entity)) as *Entity
     other.pos.x = 99
     other.pos.y = 88
     other.hp = 50

@@ -7,18 +7,6 @@ pub func empty() -> string {
     return ""
 }
 
-pub func newline() -> string {
-    return "\n"
-}
-
-pub func identity(string value) -> string {
-    return value
-}
-
-pub func print_line(string value) -> void {
-    println(value)
-}
-
 pub func is_empty(string s) -> bool {
     return len(s) == 0
 }
