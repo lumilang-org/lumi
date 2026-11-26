@@ -12,7 +12,13 @@ public sealed class SemanticModel
     private readonly Dictionary<ASTNode, CallReceiver> _receivers = new();
     private readonly HashSet<ASTNode> _enumConstructions = new();
     private readonly HashSet<ASTNode> _exhaustiveSwitches = new();
+    private readonly HashSet<ASTNode> _sliceGets = new();
     public FunctionRegistry Functions { get; } = new();
+
+    // Marks `slice.get(i)` / `array.get(i)`; its mangled name is the Option enum it returns.
+    public void MarkSliceGet(ASTNode node) => _sliceGets.Add(node);
+
+    public bool IsSliceGet(ASTNode node) => _sliceGets.Contains(node);
 
     public void MarkExhaustiveSwitch(ASTNode node) => _exhaustiveSwitches.Add(node);
 

@@ -86,6 +86,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
                 or TokenType.GreaterThanOrEqual
                 => Precedence.Comparison,
 
+            TokenType.DotDot => Precedence.Range,
+
             TokenType.Plus or TokenType.Minus
                 => Precedence.Sum,
 
@@ -927,6 +929,15 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         while (Current.Type == TokenType.LBracket)
         {
             Consume(TokenType.LBracket);
+
+            // `T[]` is a slice, `T[N]` a fixed-size array.
+            if (Current.Type == TokenType.RBracket)
+            {
+                Consume(TokenType.RBracket);
+                typeName += "[]";
+                continue;
+            }
+
             var lengthToken = Consume(TokenType.Number);
             Consume(TokenType.RBracket);
             typeName += $"[{lengthToken.Value}]";
@@ -1070,12 +1081,19 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         return IsTypeSuffixThenName(offset);
     }
 
-    // Optional array suffixes ([N]...) followed by the declared variable's name.
+    // Optional `[]` / `[N]` suffixes followed by the declared variable's name.
     private bool IsTypeSuffixThenName(int offset)
     {
         while (Peek(offset).Type == TokenType.LBracket)
         {
             offset++; // Consume '['
+
+            if (Peek(offset).Type == TokenType.RBracket)
+            {
+                offset++; // Consume ']' of `[]`
+                continue;
+            }
+
             if (Peek(offset).Type != TokenType.Number)
             {
                 return false;
@@ -1598,6 +1616,12 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
                 continue;
             }
 
+            // `..` only appears inside `[start..end]`, which ParseIndexExpression handles.
+            if (Current.Type == TokenType.DotDot)
+            {
+                break;
+            }
+
             if (Current.Type == TokenType.Star && StartsDereferenceAssignment())
             {
                 break;
@@ -1673,11 +1697,32 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
     {
         var start = target.Span.Start;
         Consume(TokenType.LBracket);
-        var index = ParseExpression();
+
+        // `[a..b]`, `[a..]`, `[..b]` and `[..]` slice a range; `[i]` indexes one element.
+        ExpressionNode? first = null;
+        if (Current.Type != TokenType.DotDot)
+        {
+            first = ParseExpression();
+        }
+
+        if (Current.Type == TokenType.DotDot)
+        {
+            Consume(TokenType.DotDot);
+
+            ExpressionNode? last = null;
+            if (Current.Type != TokenType.RBracket)
+            {
+                last = ParseExpression();
+            }
+
+            var rangeEnd = Consume(TokenType.RBracket);
+            return new RangeIndexExpressionNode(target, first, last, CreateSpan(start, rangeEnd.Span.End));
+        }
+
         var endToken = Consume(TokenType.RBracket);
 
         var span = CreateSpan(start, endToken.Span.End);
-        return new IndexExpressionNode(target, index, span);
+        return new IndexExpressionNode(target, first!, span);
     }
 
     private MemberAccessNode ParseMemberAccess(ExpressionNode target)

@@ -62,6 +62,7 @@ public enum TokenType
     Arrow,
     Comma,
     Dot,
+    DotDot,
     Colon,
     DoubleColon,
     Semicolon,

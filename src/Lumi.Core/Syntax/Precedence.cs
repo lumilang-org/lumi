@@ -9,10 +9,11 @@ public enum Precedence
     BitwiseXor = 4,
     BitwiseAnd = 5,
     Comparison = 6,
-    Shift = 7,
-    Sum = 8,
-    Product = 9,
-    Cast = 10,
-    Prefix = 11,
-    Postfix = 12
+    Range = 7,
+    Shift = 8,
+    Sum = 9,
+    Product = 10,
+    Cast = 11,
+    Prefix = 12,
+    Postfix = 13
 }

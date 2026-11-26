@@ -29,6 +29,8 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
     private int _loopDepth;
     private int _switchDepth;
     private int _deferDepth;
+    private ProgramNode _currentProgram = null!;
+    private Monomorphizer _monomorphizer = null!;
     public SemanticModel SemanticModel { get; } = new();
     private FunctionRegistry Functions => SemanticModel.Functions;
 
@@ -69,7 +71,8 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
     public void CheckCompilationUnit(IReadOnlyList<ProgramNode> modules)
     {
         _returnAnalyzer.IsExhaustive = SemanticModel.IsExhaustiveSwitch;
-        new Monomorphizer(diagnostic).Expand(modules);
+        _monomorphizer = new Monomorphizer(diagnostic);
+        _monomorphizer.Expand(modules);
         _structs.Clear();
         _enums.Clear();
         _enumModules.Clear();
@@ -147,6 +150,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             _currentFile = module.FileName;
             _currentModulePrefix = modulePrefix;
             _currentImports = module.Imports;
+            _currentProgram = module;
 
             foreach (var func in module.Functions)
             {
@@ -225,6 +229,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             _currentFile = module.FileName;
             _currentModulePrefix = module.Module != null ? string.Join("::", module.Module.PathSegments) : "";
             _currentImports = module.Imports;
+            _currentProgram = module;
 
             foreach (var enumDecl in module.Enums)
             {
@@ -245,6 +250,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             _currentFile = module.FileName;
             _currentModulePrefix = modulePrefix;
             _currentImports = module.Imports;
+            _currentProgram = module;
 
             foreach (var structDecl in module.Structs)
             {
@@ -768,6 +774,16 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                     case MemberAccessNode member:
                         targetType = CheckMemberAccess(member, scope);
                         SemanticModel.SetExpressionType(member, targetType);
+
+                        if (member.MemberName == "len" &&
+                            SemanticModel.GetExpressionType(member.Target) is var lengthOwner &&
+                            (IsArrayType(lengthOwner) || SliceTypes.IsSlice(lengthOwner)))
+                        {
+                            Report(DiagnosticCodes.TypeMismatch,
+                                "'len' is read-only and cannot be assigned.",
+                                targetAssignment.Target.Span);
+                        }
+
                         break;
 
                     case DereferenceExpressionNode dereference:
@@ -820,10 +836,14 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                 {
                     ParseArrayType(iterableType, out elementType, out _);
                 }
+                else if (SliceTypes.IsSlice(iterableType))
+                {
+                    elementType = SliceTypes.Element(iterableType);
+                }
                 else if (iterableType != TypeConst.Error)
                 {
                     Report(DiagnosticCodes.TypeMismatch,
-                        $"Type '{iterableType}' is not iterable; 'for ... in' needs an array.",
+                        $"Type '{iterableType}' is not iterable; 'for ... in' needs an array or slice.",
                         forIn.Iterable.Span);
                 }
 
@@ -1631,6 +1651,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             LiteralNode<bool> _ => TypeConst.Bool,
             ArrayLiteralNode arrayLiteral => CheckArrayLiteral(arrayLiteral, scope, expectedType),
             IndexExpressionNode indexExpression => CheckIndexExpression(indexExpression, scope),
+            RangeIndexExpressionNode range => CheckRangeIndex(range, scope),
             FunctionCallExpressionNode functionCall => CheckFunctionCall(functionCall, scope),
             StructLiteralNode structLiteral => CheckStructLiteral(structLiteral, scope),
             EnumStructLiteralNode enumLiteral => CheckEnumStructVariant(enumLiteral, scope),
@@ -1779,10 +1800,15 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             return elements[index];
         }
 
-        if (IsArrayType(targetType))
+        if (IsArrayType(targetType) || SliceTypes.IsSlice(targetType))
         {
+            if (memberAccess.MemberName == "len")
+            {
+                return TypeConst.I64;
+            }
+
             Report(DiagnosticCodes.TypeMismatch,
-                $"Type '{targetType}' is an array and does not support member access.",
+                $"Type '{targetType}' has no member '{memberAccess.MemberName}'; arrays and slices have 'len' and 'get(index)'.",
                 memberAccess.Span);
             return TypeConst.Error;
         }
@@ -1908,6 +1934,72 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
     // receiver.method(args) calls <Struct>__method with the receiver as `self`;
     // Struct.function(args) calls an associated function without one.
+    // `slice.get(i)` / `array.get(i)` -> Option<T>: Some(element) when 0 <= i < len, otherwise None.
+    private string CheckElementGet(MethodCallExpressionNode call, string receiverType, SymbolTable scope)
+    {
+        if (call.MethodName != "get")
+        {
+            Report(DiagnosticCodes.TypeMismatch,
+                $"Type '{receiverType}' has no method '{call.MethodName}'; arrays and slices have 'get(index)'.",
+                call.Span);
+            return CheckArgumentsOnly(call, scope);
+        }
+
+        if (call.Arguments.Count != 1)
+        {
+            Report(DiagnosticCodes.ArgumentCountMismatch,
+                $"'get' expects 1 argument, but received {call.Arguments.Count}.", call.Span);
+            return CheckArgumentsOnly(call, scope);
+        }
+
+        var indexType = CheckExpression(call.Arguments[0], scope);
+        SemanticModel.SetExpressionType(call.Arguments[0], indexType);
+
+        if (indexType != TypeConst.Error && !TypePromoter.IsIntegerType(indexType))
+        {
+            Report(DiagnosticCodes.TypeMismatch,
+                $"The index of 'get' must be an integer, but got '{indexType}'.", call.Arguments[0].Span);
+        }
+
+        var elementType = SliceTypes.IsSlice(receiverType)
+            ? SliceTypes.Element(receiverType)
+            : SliceTypes.ArrayElement(receiverType);
+
+        var specialization = _monomorphizer.Specialize(_currentProgram, "Option", [elementType], call, out var created);
+        if (specialization is null)
+        {
+            return TypeConst.Error;
+        }
+
+        var optionName = ResolveSymbolName(specialization);
+        if (created)
+        {
+            RegisterLateEnum(_currentProgram.Enums.First(e => e.Name == specialization));
+        }
+
+        SemanticModel.MarkSliceGet(call);
+        SemanticModel.SetMangledName(call, optionName);
+        return optionName;
+    }
+
+    // An enum specialized while checking function bodies joins the registry like a declared one.
+    private void RegisterLateEnum(EnumDeclarationNode enumDecl)
+    {
+        var mangledName = MangleName(_currentModulePrefix, enumDecl.Name);
+        _enums[mangledName] = enumDecl;
+        _enumModules[mangledName] = _currentModulePrefix;
+        SemanticModel.SetMangledName(enumDecl, mangledName);
+
+        foreach (var variant in enumDecl.Variants)
+        {
+            foreach (var field in variant.Fields)
+            {
+                ValidateType(field.Type, field.Span);
+                SemanticModel.SetType(field, ResolveType(field.Type));
+            }
+        }
+    }
+
     private string CheckMethodCall(MethodCallExpressionNode call, SymbolTable scope)
     {
         if (TryResolveEnumTarget(call.Target, scope, out var tupleEnum))
@@ -1929,6 +2021,12 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         else
         {
             receiverType = CheckExpression(call.Target, scope);
+
+            if (IsArrayType(receiverType) || SliceTypes.IsSlice(receiverType))
+            {
+                return CheckElementGet(call, receiverType, scope);
+            }
+
             structName = PointerTypes.IsPointer(receiverType) ? PointerTypes.Pointee(receiverType) : receiverType;
         }
 
@@ -2637,6 +2735,11 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         {
             ParseArrayType(expectedType, out expectedElementType, out expectedLength);
         }
+        else if (expectedType != null && SliceTypes.IsSlice(expectedType))
+        {
+            // A literal given to a slice is an array of the right element type; it converts to the slice.
+            expectedElementType = SliceTypes.Element(expectedType);
+        }
 
         if (literal.Elements.Count == 0)
         {
@@ -2647,7 +2750,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                 return TypeConst.Error;
             }
 
-            return expectedType!;
+            return SliceTypes.IsSlice(expectedType!) ? $"{expectedElementType}[0]" : expectedType!;
         }
 
         var elementType = expectedElementType;
@@ -2682,6 +2785,63 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         }
 
         return $"{elementType}[{literal.Elements.Count}]";
+    }
+
+    // `s[a..b]` on a slice or array: a `T[]` view of elements a (inclusive) to b (exclusive).
+    private string CheckRangeIndex(RangeIndexExpressionNode range, SymbolTable scope)
+    {
+        var targetType = CheckExpression(range.Target, scope);
+        SemanticModel.SetExpressionType(range.Target, targetType);
+
+        foreach (var bound in new[] { range.Start, range.End }.OfType<ExpressionNode>())
+        {
+            var boundType = CheckExpression(bound, scope);
+            SemanticModel.SetExpressionType(bound, boundType);
+
+            if (boundType != TypeConst.Error && !TypePromoter.IsIntegerType(boundType))
+            {
+                Report(DiagnosticCodes.TypeMismatch,
+                    $"A range bound must be an integer, but got '{boundType}'.", bound.Span);
+            }
+        }
+
+        if (targetType == TypeConst.Error)
+        {
+            return TypeConst.Error;
+        }
+
+        var isArray = IsArrayType(targetType);
+        if (!isArray && !SliceTypes.IsSlice(targetType))
+        {
+            Report(DiagnosticCodes.TypeMismatch,
+                $"Cannot take a range of non-array type '{targetType}'.", range.Target.Span);
+            return TypeConst.Error;
+        }
+
+        // Bounds known at compile time are checked now; the rest is checked when the program runs.
+        long? ConstantOf(ExpressionNode? bound) =>
+            bound is not null && TryGetIntegerConstant(bound, out var value) ? (long)value : null;
+
+        long? length = isArray ? SliceTypes.ArrayLength(targetType) : null;
+        var start = range.Start is null ? 0 : ConstantOf(range.Start);
+        var end = range.End is null ? length : ConstantOf(range.End);
+
+        if (start < 0)
+        {
+            Report(DiagnosticCodes.IndexOutOfBounds, $"Range start '{start}' is negative.", range.Start!.Span);
+        }
+        else if (start > end)
+        {
+            Report(DiagnosticCodes.IndexOutOfBounds,
+                $"Range start {start} is greater than its end {end}.", range.Span);
+        }
+        else if (end > length || start > length)
+        {
+            Report(DiagnosticCodes.IndexOutOfBounds,
+                $"Range is out of bounds for array of length {length}.", range.Span);
+        }
+
+        return SliceTypes.Make(isArray ? SliceTypes.ArrayElement(targetType) : SliceTypes.Element(targetType));
     }
 
     private string CheckIndexExpression(IndexExpressionNode indexExpr, SymbolTable scope)
@@ -2722,6 +2882,24 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             return PointerTypes.Pointee(targetType);
         }
 
+        // s[i] on a slice: the element type; the index is checked when the program runs.
+        if (SliceTypes.IsSlice(targetType))
+        {
+            if (!TypePromoter.IsIntegerType(indexType))
+            {
+                Report(DiagnosticCodes.TypeMismatch, $"Slice index must be an integer, but got '{indexType}'.",
+                    indexExpr.Index.Span);
+            }
+
+            if (TryGetIntegerConstant(indexExpr.Index, out var sliceIndex) && sliceIndex < 0)
+            {
+                Report(DiagnosticCodes.IndexOutOfBounds,
+                    $"Slice index '{sliceIndex}' is negative.", indexExpr.Index.Span);
+            }
+
+            return SliceTypes.Element(targetType);
+        }
+
         if (!IsArrayType(targetType))
         {
             Report(DiagnosticCodes.TypeMismatch, $"Cannot index into non-array type '{targetType}'.",
@@ -2751,7 +2929,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
     private bool IsArrayType(string type)
     {
-        return type.Contains('[') && type.EndsWith(']');
+        return SliceTypes.IsFixedArray(type);
     }
 
     private void ParseArrayType(string type, out string elementType, out int length)
@@ -2764,6 +2942,19 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
     private void ValidateType(string type, SourceSpan? span)
     {
+        if (SliceTypes.IsSlice(type))
+        {
+            var sliceElement = SliceTypes.Element(type);
+            if (sliceElement == TypeConst.Void)
+            {
+                Report(DiagnosticCodes.TypeMismatch, "A slice element cannot be 'void'.", span);
+                return;
+            }
+
+            ValidateType(sliceElement, span);
+            return;
+        }
+
         if (IsArrayType(type))
         {
             ParseArrayType(type, out var elementType, out var length);
@@ -2827,6 +3018,11 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
     private string ResolveType(string type)
     {
+        if (SliceTypes.IsSlice(type))
+        {
+            return SliceTypes.Make(ResolveType(SliceTypes.Element(type)));
+        }
+
         if (IsArrayType(type))
         {
             ParseArrayType(type, out var elementType, out var length);
@@ -2864,6 +3060,13 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         ExpressionNode expression)
     {
         if (targetType == sourceType)
+        {
+            return true;
+        }
+
+        // A fixed array converts to a slice of the same element type.
+        if (SliceTypes.IsSlice(targetType) && SliceTypes.IsFixedArray(sourceType)
+            && SliceTypes.Element(targetType) == SliceTypes.ArrayElement(sourceType))
         {
             return true;
         }

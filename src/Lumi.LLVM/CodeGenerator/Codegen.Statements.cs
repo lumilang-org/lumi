@@ -22,6 +22,13 @@ public sealed partial class Codegen
                 if (varDecl.Initializer == null)
                 {
                     var alloca = _builder.BuildAlloca(declaredType, varDecl.Name);
+
+                    // An unset slice is empty instead of holding garbage.
+                    if (SliceTypes.IsSlice(resolvedType))
+                    {
+                        _builder.BuildStore(LLVMValueRef.CreateConstNull(declaredType), alloca);
+                    }
+
                     _currentScope.Declare(varDecl.Name, new VariableSymbol(resolvedType, declaredType, alloca));
                     break;
                 }
@@ -37,7 +44,8 @@ public sealed partial class Codegen
                     break;
                 }
 
-                if (resolvedType.Contains('[') && varDecl.Initializer is ArrayLiteralNode arrayLiteral)
+                if (resolvedType.Contains('[') && !SliceTypes.IsSlice(resolvedType) &&
+                    varDecl.Initializer is ArrayLiteralNode arrayLiteral)
                 {
                     var arrayLlvmType = ResolveType(resolvedType);
                     var alloca = _builder.BuildAlloca(arrayLlvmType, varDecl.Name);
@@ -338,15 +346,25 @@ public sealed partial class Codegen
     private void GenerateForInStatement(ForInStatementNode forIn)
     {
         var arrayTypeName = _semanticModel.GetExpressionType(forIn.Iterable);
+        var isSlice = SliceTypes.IsSlice(arrayTypeName);
         var arrayType = ResolveType(arrayTypeName);
         var elementTypeName = _semanticModel.GetType(forIn);
         var elementType = ResolveType(elementTypeName);
-        var length = arrayType.ArrayLength;
+        var lengthValue = isSlice ? default : LLVMValueRef.CreateConstInt(_usizeType, arrayType.ArrayLength);
 
         // The iterable is evaluated once, before the loop.
         LLVMValueRef arrayPtr;
         switch (forIn.Iterable)
         {
+            case var _ when isSlice:
+            {
+                var slice = GenerateExpression(forIn.Iterable);
+                arrayPtr = _builder.BuildExtractValue(slice, 0, "for.in.slice.ptr");
+                lengthValue = _builder.BuildIntCast2(
+                    _builder.BuildExtractValue(slice, 1, "for.in.slice.len"), _usizeType, false, "for.in.len");
+                break;
+            }
+
             case IdentifierNode or MemberAccessNode or IndexExpressionNode or DereferenceExpressionNode:
                 arrayPtr = ResolveTargetAddress(forIn.Iterable).Pointer;
                 break;
@@ -376,7 +394,7 @@ public sealed partial class Codegen
         var inRange = _builder.BuildICmp(
             LLVMIntPredicate.LLVMIntULT,
             index,
-            LLVMValueRef.CreateConstInt(_usizeType, length),
+            lengthValue,
             "for.in.cond");
         _builder.BuildCondBr(inRange, bodyBlock, endBlock);
 
@@ -387,11 +405,13 @@ public sealed partial class Codegen
         {
             _builder.PositionAtEnd(bodyBlock);
 
-            var elementPtr = _builder.BuildGEP2(
-                arrayType,
-                arrayPtr,
-                new[] { LLVMValueRef.CreateConstInt(_context.Int32Type, 0), index },
-                "for.in.element");
+            var elementPtr = isSlice
+                ? _builder.BuildGEP2(elementType, arrayPtr, new[] { index }, "for.in.element")
+                : _builder.BuildGEP2(
+                    arrayType,
+                    arrayPtr,
+                    new[] { LLVMValueRef.CreateConstInt(_context.Int32Type, 0), index },
+                    "for.in.element");
 
             var variable = _builder.BuildAlloca(elementType, forIn.VariableName);
             _builder.BuildStore(_builder.BuildLoad2(elementType, elementPtr, "for.in.item"), variable);

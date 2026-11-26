@@ -367,6 +367,14 @@ public sealed class Lexer
 
             case '.':
                 Advance();
+
+                // `..` is the range operator; a lone `.` stays member access.
+                if (!IsAtEnd() && _currentChar == '.')
+                {
+                    Advance();
+                    return CreateToken(TokenType.DotDot, "..", start);
+                }
+
                 return CreateToken(TokenType.Dot, ".", start);
 
             case ';':

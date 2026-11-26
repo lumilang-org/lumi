@@ -445,6 +445,30 @@ switch r {
 * Wrong type-argument counts (`Option<i32, bool>`, `Result<i32>`) are `LUMI1021`.
 * Like other generics they are resolved per module: each module that uses `Option<i32>` gets its own `Option__i32`, so values of the same instantiation cannot be passed between modules. A module that declares its own `Option` or `Result` keeps its own.
 
+### 7.8 Slices
+
+`T[]` (empty brackets) is a slice: a view of consecutive `T` elements that stores a pointer and a length. It is different from a fixed array `T[N]`, whose length is part of the type.
+
+```
+i32[3] arr = [1, 2, 3]
+i32[] s = arr              // a view of arr, not a copy
+println(s.len)             // 3 (i64)
+switch s.get(1) {          // Option<i32>
+    Some(v) => println(v)
+    None => println(-1)
+}
+```
+
+* A fixed array of the same element type converts to a slice wherever a slice is expected: initializers, assignments, arguments, `return`, struct fields. An array literal does too (`sum([1, 2, 3])`), but then the slice points at a temporary of the current function, so do not return it.
+* `.len` is read-only and yields an `i64` for both slices and arrays. Assigning to it is an error.
+* `.get(i)` (slices and arrays) returns `Option<T>`: `Some(element)` when `0 <= i < len`, otherwise `None`. A negative index is `None`. The index can be any integer type.
+* `T[]` is valid in parameters, return types, struct fields and type arguments (`Option<i32[]>`). A slice declared without initializer is empty. `*T[]` is a slice of pointers; a pointer to a slice is `*(T[])`.
+* Ranges: `s[start..end]` (see below). `s[i]` reads and writes an element of a slice (`s[0] = s[1] + 1`), and `for x in s` visits each element (a copy, like arrays). A slice index outside `0 <= i < len` terminates the program at run time; a negative constant index is `LUMI1012`. `Vec<T>` is not supported yet.
+
+**Range slicing.** `s[start..end]` takes elements `start` up to but not including `end` of a slice or fixed array and yields a `T[]` that views the same elements (nothing is copied, so writes to the array show through). Either bound can be left out: `s[a..]` runs to the end, `s[..b]` starts at 0 and `s[..]` is the whole thing. Bounds are any integer type and may be expressions (`s[i + 1 .. n * 2]`); `..` binds looser than arithmetic, so no parentheses are needed. Ranges chain: `s[1..5][1..3]`, and `.len` / `.get(i)` work on the result. `s[i..i]` is empty.
+
+A range must satisfy `0 <= start <= end <= len`. Bounds known at compile time that violate this are `LUMI1012`; otherwise the check happens when the program runs, and a violation terminates it (the same way an invalid shift amount does).
+
 ---
 
 ## 8. Built-in Statements

@@ -46,6 +46,7 @@ public sealed partial class Codegen
             StructLiteralNode structLiteral => GenerateStructLiteral(structLiteral),
             ArrayLiteralNode arrayLiteral => GenerateArrayLiteral(arrayLiteral),
             IndexExpressionNode indexExpression => GenerateIndexExpression(indexExpression),
+            RangeIndexExpressionNode range => GenerateRangeIndex(range),
             FunctionCallExpressionNode functionCall => GenerateFunctionCall(functionCall),
             MethodCallExpressionNode methodCall => GenerateMethodCall(methodCall),
             MemberAccessNode member => GenerateMemberAccess(member),
@@ -115,6 +116,11 @@ public sealed partial class Codegen
     private void EmitArrayLiteralElements(ArrayLiteralNode literal, LLVMValueRef arrayPtr, LLVMTypeRef arrayType)
     {
         var elementType = arrayType.ElementType;
+        var literalType = _semanticModel.GetExpressionType(literal);
+
+        // Elements are converted to the literal's element type (an array element given to `T[][N]`
+        // becomes a slice).
+        var elementLumiTypeName = SliceTypes.IsFixedArray(literalType) ? SliceTypes.ArrayElement(literalType) : "";
         for (var i = 0; i < literal.Elements.Count; i++)
         {
             var elementValue = GenerateExpression(literal.Elements[i]);
@@ -133,7 +139,7 @@ public sealed partial class Codegen
                 elementValue,
                 literal.Elements[i],
                 elementType,
-                "", // targetTypeName is not used for integers anyway
+                elementLumiTypeName,
                 $"array_literal_init_{i}");
 
             _builder.BuildStore(elementValue, elementPtr);
@@ -193,6 +199,11 @@ public sealed partial class Codegen
     {
         // An element of a tuple that is not stored anywhere (pair().0) is extracted by value.
         var receiverType = _semanticModel.GetExpressionType(member.Target);
+        if (member.MemberName == "len" && (SliceTypes.IsSlice(receiverType) || SliceTypes.IsFixedArray(receiverType)))
+        {
+            return GenerateLength(member, receiverType);
+        }
+
         if (TupleTypes.IsTuple(receiverType) && !IsStoredLocation(member.Target))
         {
             return _builder.BuildExtractValue(
@@ -268,6 +279,11 @@ public sealed partial class Codegen
     // receiver, adjusted to the type of `self`, as the first argument.
     private LLVMValueRef GenerateMethodCall(MethodCallExpressionNode call)
     {
+        if (_semanticModel.IsSliceGet(call))
+        {
+            return GenerateElementGet(call);
+        }
+
         var mangledName = _semanticModel.GetMangledName(call);
         var functionInfo = _functions[mangledName];
         _semanticModel.Functions.TryGet(mangledName, out var signature);
@@ -460,6 +476,28 @@ public sealed partial class Codegen
                 var elementPtr = _builder.BuildGEP2(elementType, pointer, new[] { index }, "ptr_index_ptr");
 
                 return (elementPtr, elementTypeName, elementType);
+            }
+
+            case IndexExpressionNode indexExpr
+                when SliceTypes.IsSlice(_semanticModel.GetExpressionType(indexExpr.Target)):
+            {
+                // s[i] on a slice: bounds-checked step from the view's element pointer.
+                var slice = GenerateExpression(indexExpr.Target);
+                var elementPointer = _builder.BuildExtractValue(slice, 0, "slice.ptr");
+                var count = _builder.BuildExtractValue(slice, 1, "slice.len");
+                var index = WidenIndex(
+                    GenerateExpression(indexExpr.Index),
+                    _semanticModel.GetExpressionType(indexExpr.Index));
+
+                // Unsigned comparison also rejects a negative index.
+                var inBounds = _builder.BuildICmp(LLVMIntPredicate.LLVMIntULT, index, count, "slice.index.ok");
+                EmitAbortUnless(inBounds, "slice.index");
+
+                var elementTypeName = _semanticModel.GetExpressionType(indexExpr);
+                var elementType = ResolveType(elementTypeName);
+                var address = _builder.BuildGEP2(elementType, elementPointer, new[] { index }, "slice.index.ptr");
+
+                return (address, elementTypeName, elementType);
             }
 
             case IndexExpressionNode indexExpr:

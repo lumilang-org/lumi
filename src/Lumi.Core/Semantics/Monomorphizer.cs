@@ -25,6 +25,26 @@ public sealed class Monomorphizer(DiagnosticBag diagnostics)
         TypeConst.Bool, TypeConst.Char, TypeConst.String, TypeConst.Void
     ];
 
+    private readonly Dictionary<ProgramNode, ModuleExpansion> _expansions = new();
+
+    // Specializes a generic template of `module` on demand (used by the checker for built-ins such
+    // as `slice.get`). Returns the specialization's name in the module, or null when unavailable.
+    public string? Specialize(
+        ProgramNode module, string template, IReadOnlyList<string> arguments, ASTNode owner, out bool created)
+    {
+        created = false;
+
+        if (!_expansions.TryGetValue(module, out var expansion))
+        {
+            return null;
+        }
+
+        var before = module.Enums.Count + module.Structs.Count + module.Functions.Count;
+        var name = expansion.SpecializeOnDemand(template, arguments.ToList(), owner);
+        created = module.Enums.Count + module.Structs.Count + module.Functions.Count > before;
+        return name;
+    }
+
     public void Expand(IReadOnlyList<ProgramNode> modules)
     {
         var knownTypes = new HashSet<string>(BuiltinTypes);
@@ -45,7 +65,9 @@ public sealed class Monomorphizer(DiagnosticBag diagnostics)
             if (module.GenericFunctions.Count > 0 || module.GenericStructs.Count > 0 ||
                 module.GenericEnums.Count > 0)
             {
-                new ModuleExpansion(diagnostics, module, knownTypes).Run();
+                var expansion = new ModuleExpansion(diagnostics, module, knownTypes);
+                _expansions[module] = expansion;
+                expansion.Run();
             }
         }
     }
@@ -142,6 +164,20 @@ public sealed class Monomorphizer(DiagnosticBag diagnostics)
                 var declaration = _queue.Dequeue();
                 Process(declaration, _depths[declaration]);
             }
+        }
+
+        public string? SpecializeOnDemand(string template, List<string> arguments, ASTNode owner)
+        {
+            _currentDepth = 0;
+            var name = Instantiate(template, arguments, owner);
+
+            while (_queue.Count > 0)
+            {
+                var declaration = _queue.Dequeue();
+                Process(declaration, _depths[declaration]);
+            }
+
+            return name;
         }
 
         private void Process(ASTNode declaration, int depth)

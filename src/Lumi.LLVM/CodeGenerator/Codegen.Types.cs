@@ -12,6 +12,12 @@ public sealed partial class Codegen
 {
     private LLVMTypeRef ResolveType(string typeName)
     {
+        // T[] is a view { element pointer, element count }.
+        if (SliceTypes.IsSlice(typeName))
+        {
+            return SliceStructType();
+        }
+
         if (typeName.Contains('[') && typeName.EndsWith(']'))
         {
             var lastBracket = typeName.LastIndexOf('[');
@@ -125,6 +131,13 @@ public sealed partial class Codegen
         string name)
     {
         var sourceType = value.TypeOf;
+
+        // A fixed array given where a slice is expected becomes a view of the array.
+        if (SliceTypes.IsSlice(targetTypeName) &&
+            SliceTypes.IsFixedArray(_semanticModel.GetExpressionType(expression)))
+        {
+            return ArrayToSlice(value, expression);
+        }
 
         if (sourceType.Kind != LLVMTypeKind.LLVMIntegerTypeKind ||
             targetType.Kind != LLVMTypeKind.LLVMIntegerTypeKind)
