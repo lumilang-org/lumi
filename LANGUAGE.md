@@ -420,6 +420,31 @@ func main() {
 * `<` is treated as type arguments only after the name of a generic declared in the same file; elsewhere it stays the comparison operator.
 * Limits: generics are resolved inside the module that declares them (no cross-module `other::Box<i32>`), struct functions cannot declare their own type parameters, and enums cannot be generic.
 
+### 7.7 `Option<T>` and `Result<T, E>`
+
+Both are available in every file without an import.
+
+```
+Option<i32> a = Option<i32>.Some(10)
+let none = Option<i32>.None()
+Result<i32, ParseError> r = Result<i32, ParseError>.Err(ParseError.EmptyInput)
+
+switch a {
+    Some(v) => println(v)      // also Option.Some(v)
+    None => println(0)         // also Option.None or Option.None()
+}
+switch r {
+    Ok(v) => println(v)        // also Result.Ok(v)
+    Err(e) => println(1)       // also Result.Err(e)
+}
+```
+
+* `Option<T>` has `Some(T)` (tag 0) and `None` (tag 1); `Result<T, E>` has `Ok(T)` (tag 0) and `Err(E)` (tag 1). `None()` with empty parentheses builds the same value as `None`.
+* They are generic enums declared by a built-in prelude (`BuiltinGenericRegistry`), so `Option<i32>` becomes the concrete enum `Option__i32` and `Result<i32, ParseError>` becomes `Result__i32_ParseError`, with the usual enum layout (an `i32` tag and a payload area sized for the largest variant).
+* A `switch` must cover both variants (or use `default`). Duplicate or unknown arms and a payload binding on `None` are errors. A bound payload (`v`, `e`) exists only inside its arm and has the concrete type `T` or `E`.
+* Wrong type-argument counts (`Option<i32, bool>`, `Result<i32>`) are `LUMI1021`.
+* Like other generics they are resolved per module: each module that uses `Option<i32>` gets its own `Option__i32`, so values of the same instantiation cannot be passed between modules. A module that declares its own `Option` or `Result` keeps its own.
+
 ---
 
 ## 8. Built-in Statements

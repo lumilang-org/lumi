@@ -40,11 +40,35 @@ public sealed class Monomorphizer(DiagnosticBag diagnostics)
 
         foreach (var module in modules)
         {
-            if (module.GenericFunctions.Count > 0 || module.GenericStructs.Count > 0)
+            AddPrelude(module);
+
+            if (module.GenericFunctions.Count > 0 || module.GenericStructs.Count > 0 ||
+                module.GenericEnums.Count > 0)
             {
                 new ModuleExpansion(diagnostics, module, knownTypes).Run();
             }
         }
+    }
+
+    // Makes the built-in generics (Option, Result) usable in `module` unless it declares the name itself.
+    private static void AddPrelude(ProgramNode module)
+    {
+        var declared = module.Structs.Select(s => s.Name)
+            .Concat(module.Enums.Select(e => e.Name))
+            .Concat(module.GenericStructs.Select(s => s.Name))
+            .Concat(module.GenericEnums.Select(e => e.Name))
+            .Concat(module.GenericFunctions.Select(f => f.Name));
+
+        var source = BuiltinGenericRegistry.PreludeSource(declared);
+        if (source.Length == 0)
+        {
+            return;
+        }
+
+        var preludeDiagnostics = new DiagnosticBag();
+        var tokens = new Lexer(source, preludeDiagnostics, "<prelude>").Tokenize();
+        var prelude = new Parser(tokens, preludeDiagnostics, "<prelude>").ParseProgram();
+        module.GenericEnums.AddRange(prelude.GenericEnums);
     }
 
     private sealed class ModuleExpansion
@@ -54,6 +78,7 @@ public sealed class Monomorphizer(DiagnosticBag diagnostics)
         private readonly HashSet<string> _knownTypes;
         private readonly Dictionary<string, FunctionDeclarationNode> _functionTemplates = new();
         private readonly Dictionary<string, StructDeclarationNode> _structTemplates = new();
+        private readonly Dictionary<string, EnumDeclarationNode> _enumTemplates = new();
         private readonly Dictionary<string, string?> _cache = new();
         private readonly Dictionary<ASTNode, int> _depths = new();
         private readonly Queue<ASTNode> _queue = new();
@@ -86,7 +111,17 @@ public sealed class Monomorphizer(DiagnosticBag diagnostics)
                 }
             }
 
-            foreach (var template in _module.GenericFunctions.Concat<ASTNode>(_module.GenericStructs))
+            foreach (var enumDecl in _module.GenericEnums)
+            {
+                if (!_enumTemplates.TryAdd(enumDecl.Name, enumDecl))
+                {
+                    Report(DiagnosticCodes.TypeMismatch,
+                        $"Generic enum '{enumDecl.Name}' is already declared.", enumDecl);
+                }
+            }
+
+            foreach (var template in _module.GenericFunctions.Concat<ASTNode>(_module.GenericStructs)
+                         .Concat(_module.GenericEnums))
             {
                 ValidateTemplate(template);
             }
@@ -121,15 +156,19 @@ public sealed class Monomorphizer(DiagnosticBag diagnostics)
             {
                 FunctionDeclarationNode f => f.Constraints,
                 StructDeclarationNode s => s.Constraints,
+                EnumDeclarationNode e => e.Constraints,
                 _ => []
             };
 
             foreach (var constraint in constraints)
             {
                 var bound = Regex.Match(constraint.BoundType, @"[A-Za-z_]\w*(::\w+)*").Value;
-                var typeParameters = template is FunctionDeclarationNode fn
-                    ? fn.TypeParameters
-                    : ((StructDeclarationNode)template).TypeParameters;
+                var typeParameters = template switch
+                {
+                    FunctionDeclarationNode fn => fn.TypeParameters,
+                    StructDeclarationNode st => st.TypeParameters,
+                    _ => ((EnumDeclarationNode)template).TypeParameters
+                };
 
                 if (bound.Length > 0 && !bound.Contains("::") && !_knownTypes.Contains(bound) &&
                     !typeParameters.Contains(bound))
@@ -165,7 +204,8 @@ public sealed class Monomorphizer(DiagnosticBag diagnostics)
                 var word = text[start..i];
 
                 if (i < text.Length && text[i] == '<' &&
-                    (_structTemplates.ContainsKey(word) || _functionTemplates.ContainsKey(word)))
+                    (_structTemplates.ContainsKey(word) || _functionTemplates.ContainsKey(word) ||
+                     _enumTemplates.ContainsKey(word)))
                 {
                     var close = FindClosingAngle(text, i);
 
@@ -190,10 +230,14 @@ public sealed class Monomorphizer(DiagnosticBag diagnostics)
         private string? Instantiate(string name, List<string> arguments, ASTNode owner)
         {
             var isStruct = _structTemplates.TryGetValue(name, out var structTemplate);
+            var isEnum = !isStruct && _enumTemplates.TryGetValue(name, out var enumTemplate);
             _functionTemplates.TryGetValue(name, out var functionTemplate);
+            enumTemplate = isEnum ? _enumTemplates[name] : null;
 
-            var typeParameters = isStruct ? structTemplate!.TypeParameters : functionTemplate!.TypeParameters;
-            var constraints = isStruct ? structTemplate!.Constraints : functionTemplate!.Constraints;
+            var typeParameters = isStruct ? structTemplate!.TypeParameters
+                : isEnum ? enumTemplate!.TypeParameters : functionTemplate!.TypeParameters;
+            var constraints = isStruct ? structTemplate!.Constraints
+                : isEnum ? enumTemplate!.Constraints : functionTemplate!.Constraints;
 
             if (arguments.Count != typeParameters.Count)
             {
@@ -247,7 +291,17 @@ public sealed class Monomorphizer(DiagnosticBag diagnostics)
 
             ASTNode specialization;
 
-            if (isStruct)
+            if (isEnum)
+            {
+                var clone = AstRewriter.Clone(enumTemplate!, (_, text) => Substitute(text, substitutions));
+                AstRewriter.SetProperty(clone, "Name", mangled);
+                AstRewriter.SetProperty(clone, "GenericOrigin", name);
+                AstRewriter.SetProperty(clone, "TypeParameters", new List<string>());
+                AstRewriter.SetProperty(clone, "Constraints", new List<TypeConstraintNode>());
+                _module.AddSpecialization(clone);
+                specialization = clone;
+            }
+            else if (isStruct)
             {
                 var clone = AstRewriter.Clone(structTemplate!, (_, text) => Substitute(text, substitutions));
                 AstRewriter.SetProperty(clone, "Name", mangled);

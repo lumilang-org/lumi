@@ -80,7 +80,7 @@ Msg e = Msg.Move { x: 1, y: 2 }");
         Assert.That(Count(CheckBody("Msg a = Msg.Move { x: 1, y: 2, z: 3 }"), DiagnosticCodes.TypeMismatch), Is.EqualTo(1));
         Assert.That(Count(CheckBody("Msg a = Msg.Move { x: 1, x: 2, y: 3 }"), DiagnosticCodes.TypeMismatch), Is.EqualTo(1));
         Assert.That(Count(CheckBody("Msg a = Msg.Move { x: true, y: 2 }"), DiagnosticCodes.TypeMismatch), Is.EqualTo(1));
-        Assert.That(Count(CheckBody("Msg a = Msg.Quit(1)"), DiagnosticCodes.TypeMismatch), Is.GreaterThan(0));
+        Assert.That(Count(CheckBody("Msg a = Msg.Quit(1)"), DiagnosticCodes.ArgumentCountMismatch), Is.EqualTo(1));
         Assert.That(Count(CheckBody("i32 a = Msg.Quit"), DiagnosticCodes.TypeMismatch), Is.EqualTo(1));
     }
 
@@ -131,7 +131,7 @@ switch m {
 
         Assert.That(Count(CheckBody(Arm("Msg.Nope")), DiagnosticCodes.TypeMismatch), Is.GreaterThan(0));
         Assert.That(Count(CheckBody(Arm("Msg.Key")), DiagnosticCodes.TypeMismatch), Is.GreaterThan(0));
-        Assert.That(Count(CheckBody(Arm("Msg.Quit(x)")), DiagnosticCodes.TypeMismatch), Is.GreaterThan(0));
+        Assert.That(Count(CheckBody(Arm("Msg.Quit(x)")), DiagnosticCodes.InvalidSwitch), Is.EqualTo(1));
         Assert.That(Count(CheckBody(Arm("Msg.Pair(a)")), DiagnosticCodes.ArgumentCountMismatch), Is.EqualTo(1));
         Assert.That(Count(CheckBody(Arm("Msg.Key(1)")), DiagnosticCodes.InvalidSwitch), Is.EqualTo(1));
         Assert.That(Count(CheckBody(Arm("Msg.Move { x }")), DiagnosticCodes.TypeMismatch), Is.EqualTo(1));

@@ -1201,7 +1201,8 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         var variant = FindVariant(enumName, call.MethodName);
         var display = $"{_enums[enumName].Name}.{call.MethodName}";
 
-        if (variant is null || variant.Kind != EnumVariantKind.Tuple)
+        // `Option<i32>.None()`: a variant without payload may also be built with empty parentheses.
+        if (variant is null || variant.Kind is not (EnumVariantKind.Tuple or EnumVariantKind.Unit))
         {
             Report(DiagnosticCodes.TypeMismatch,
                 variant is null
@@ -1411,6 +1412,23 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         }
     }
 
+    // `Name` in `Name.Variant` of a pattern: a declared enum, or the generic a specialization came from.
+    private bool ResolvePatternEnum(ExpressionNode target, SymbolTable scope, string enumName, out string patternEnum)
+    {
+        if (TryResolveEnumTarget(target, scope, out patternEnum))
+        {
+            return true;
+        }
+
+        if (target is IdentifierNode id && _enums[enumName].GenericOrigin == id.Name && !scope.TryLookup(id.Name, out _))
+        {
+            patternEnum = enumName;
+            return true;
+        }
+
+        return false;
+    }
+
     // Returns the variant a pattern names (or null after reporting), collecting its bindings.
     private EnumVariantNode? ResolveEnumPattern(
         ExpressionNode pattern,
@@ -1420,14 +1438,27 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
     {
         string patternEnum;
         string variantName;
+        IReadOnlyList<ExpressionNode>? callArguments = null;
+        var isGenericEnum = _enums[enumName].GenericOrigin is not null;
 
         switch (pattern)
         {
-            case MemberAccessNode access when TryResolveEnumTarget(access.Target, scope, out patternEnum):
+            case MemberAccessNode access when ResolvePatternEnum(access.Target, scope, enumName, out patternEnum):
                 variantName = access.MemberName;
                 break;
-            case MethodCallExpressionNode call when TryResolveEnumTarget(call.Target, scope, out patternEnum):
+            case MethodCallExpressionNode call when ResolvePatternEnum(call.Target, scope, enumName, out patternEnum):
                 variantName = call.MethodName;
+                callArguments = call.Arguments;
+                break;
+            // Built-in generics also allow bare variants: `Some(v)`, `None`, `Ok(v)`, `Err(e)`.
+            case IdentifierNode bare when isGenericEnum && !scope.TryLookup(bare.Name, out _):
+                patternEnum = enumName;
+                variantName = bare.Name;
+                break;
+            case FunctionCallExpressionNode bareCall when isGenericEnum:
+                patternEnum = enumName;
+                variantName = bareCall.Name;
+                callArguments = bareCall.Arguments;
                 break;
             case EnumStructLiteralNode literal
                 when _enums.ContainsKey(patternEnum = ResolveSymbolName(literal.EnumName)):
@@ -1460,12 +1491,23 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
         var expectedKind = pattern switch
         {
-            MemberAccessNode => EnumVariantKind.Unit,
-            MethodCallExpressionNode => EnumVariantKind.Tuple,
+            MemberAccessNode or IdentifierNode => EnumVariantKind.Unit,
+            MethodCallExpressionNode or FunctionCallExpressionNode => EnumVariantKind.Tuple,
             _ => EnumVariantKind.Struct
         };
 
-        if (variant.Kind != expectedKind)
+        if (variant.Kind == EnumVariantKind.Unit && callArguments is { Count: > 0 })
+        {
+            Report(DiagnosticCodes.InvalidSwitch,
+                $"Variant '{display}' has no payload, so it cannot bind a value; write it as '{display}'.",
+                pattern.Span);
+            return null;
+        }
+
+        // `Option.None()` is the same pattern as `Option.None`.
+        var unitWithParentheses = variant.Kind == EnumVariantKind.Unit && callArguments is { Count: 0 };
+
+        if (variant.Kind != expectedKind && !unitWithParentheses)
         {
             Report(DiagnosticCodes.TypeMismatch,
                 variant.Kind switch
@@ -1480,18 +1522,18 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
         switch (pattern)
         {
-            case MethodCallExpressionNode call:
-                if (call.Arguments.Count != variant.Fields.Count)
+            case MethodCallExpressionNode or FunctionCallExpressionNode:
+                if (callArguments!.Count != variant.Fields.Count)
                 {
                     Report(DiagnosticCodes.ArgumentCountMismatch,
-                        $"Pattern '{display}' binds {call.Arguments.Count} values, but the variant has {variant.Fields.Count}.",
+                        $"Pattern '{display}' binds {callArguments.Count} values, but the variant has {variant.Fields.Count}.",
                         pattern.Span);
                     return null;
                 }
 
-                for (var i = 0; i < call.Arguments.Count; i++)
+                for (var i = 0; i < callArguments.Count; i++)
                 {
-                    if (call.Arguments[i] is IdentifierNode name)
+                    if (callArguments[i] is IdentifierNode name)
                     {
                         bindings.Add((name, SemanticModel.GetType(variant.Fields[i])));
                     }
@@ -1499,7 +1541,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                     {
                         Report(DiagnosticCodes.InvalidSwitch,
                             "A payload pattern must be a variable name that receives the value.",
-                            call.Arguments[i].Span);
+                            callArguments[i].Span);
                     }
                 }
 

@@ -160,6 +160,8 @@ public sealed partial class Codegen
         return pattern switch
         {
             MemberAccessNode access => access.MemberName,
+            IdentifierNode bare => bare.Name,
+            FunctionCallExpressionNode bareCall => bareCall.Name,
             MethodCallExpressionNode call => call.MethodName,
             EnumStructLiteralNode literal => literal.VariantName,
             _ => throw new InvalidOperationException("Not an enum pattern.")
@@ -265,6 +267,13 @@ public sealed partial class Codegen
                 for (var i = 0; i < call.Arguments.Count; i++)
                 {
                     bindings.Add((((IdentifierNode)call.Arguments[i]).Name, i));
+                }
+
+                break;
+            case FunctionCallExpressionNode bareCall:
+                for (var i = 0; i < bareCall.Arguments.Count; i++)
+                {
+                    bindings.Add((((IdentifierNode)bareCall.Arguments[i]).Name, i));
                 }
 
                 break;

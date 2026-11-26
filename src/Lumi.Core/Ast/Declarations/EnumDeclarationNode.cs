@@ -32,8 +32,15 @@ public sealed class EnumDeclarationNode(
     string name,
     IReadOnlyList<EnumVariantNode> variants,
     SourceSpan span,
-    VisibilityModifier visibilityModifier = VisibilityModifier.Private) : ASTNode(span)
+    VisibilityModifier visibilityModifier = VisibilityModifier.Private,
+    IReadOnlyList<string>? typeParameters = null,
+    IReadOnlyList<TypeConstraintNode>? constraints = null) : ASTNode(span)
 {
+    public IReadOnlyList<string> TypeParameters { get; } = typeParameters ?? [];
+    public IReadOnlyList<TypeConstraintNode> Constraints { get; } = constraints ?? [];
+
+    // For a specialization of a generic enum: the template's name (`Option` for `Option__i32`).
+    public string? GenericOrigin { get; private set; }
     public string Name { get; } = name;
     public IReadOnlyList<EnumVariantNode> Variants { get; } = variants;
     public VisibilityModifier VisibilityModifier { get; } = visibilityModifier;

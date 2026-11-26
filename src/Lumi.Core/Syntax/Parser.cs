@@ -456,6 +456,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         _genericNames = CollectGenericNames();
         var genericFunctions = new List<FunctionDeclarationNode>();
         var genericStructs = new List<StructDeclarationNode>();
+        var genericEnums = new List<EnumDeclarationNode>();
 
         if (Current.Type == TokenType.KeywordModule)
         {
@@ -477,7 +478,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
                 if (declarationKind == TokenType.KeywordEnum)
                 {
-                    enums.Add(ParseEnumDeclaration());
+                    var parsedEnum = ParseEnumDeclaration();
+                    (parsedEnum.TypeParameters.Count > 0 ? genericEnums : enums).Add(parsedEnum);
                 }
                 else if (declarationKind == TokenType.KeywordStruct)
                 {
@@ -520,16 +522,18 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         var program = new ProgramNode(module, imports, functions, structs, enums, externFunctions, span, fileName);
         program.GenericFunctions.AddRange(genericFunctions);
         program.GenericStructs.AddRange(genericStructs);
+        program.GenericEnums.AddRange(genericEnums);
         return program;
     }
 
     private HashSet<string> CollectGenericNames()
     {
-        var names = new HashSet<string>();
+        // The prelude generics (Option, Result) are available in every file.
+        var names = new HashSet<string>(BuiltinGenericRegistry.Names);
 
         for (var i = 0; i + 2 < tokens.Count; i++)
         {
-            if (tokens[i].Type is TokenType.KeywordFunc or TokenType.KeywordStruct &&
+            if (tokens[i].Type is TokenType.KeywordFunc or TokenType.KeywordStruct or TokenType.KeywordEnum &&
                 tokens[i + 1].Type == TokenType.Identifier &&
                 tokens[i + 2].Type == TokenType.LessThan)
             {
@@ -683,6 +687,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
         Consume(TokenType.KeywordEnum);
         var nameToken = Consume(TokenType.Identifier);
+        var typeParameters = ParseTypeParameters();
+        var constraints = ParseWhereClause(typeParameters);
         Consume(TokenType.LBrace);
 
         var variants = new List<EnumVariantNode>();
@@ -757,7 +763,9 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             nameToken.Value,
             variants,
             CreateSpan(startToken.Span.Start, end.Span.End),
-            visibility);
+            visibility,
+            typeParameters,
+            constraints);
     }
 
     // True while parsing a switch pattern, where `Enum.Variant { x, y }` may bind by field name.

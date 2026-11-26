@@ -27,7 +27,10 @@ public sealed class ProgramNode(
 
     public void AddSpecialization(FunctionDeclarationNode function) => _functions.Add(function);
     public void AddSpecialization(StructDeclarationNode structDecl) => _structs.Add(structDecl);
-    public IReadOnlyList<EnumDeclarationNode> Enums { get; } = enums;
+    private readonly List<EnumDeclarationNode> _enums = [..enums];
+    public IReadOnlyList<EnumDeclarationNode> Enums => _enums;
+    public List<EnumDeclarationNode> GenericEnums { get; } = [];
+    public void AddSpecialization(EnumDeclarationNode enumDecl) => _enums.Add(enumDecl);
     public IReadOnlyList<ExternFunctionDeclarationNode> ExternFunctions { get; } = externFunctions;
 
     // Module-level functions followed by the functions nested in structs.
