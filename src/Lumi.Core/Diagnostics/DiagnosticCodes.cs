@@ -39,6 +39,10 @@ public static class DiagnosticCodes
     public const string DuplicateCase = "LUMI1017";
     public const string InvalidSwitch = "LUMI1018";
     public const string InvalidDefer = "LUMI1019";
+    public const string InvalidTypeParameters = "LUMI1020";
+    public const string GenericArgumentMismatch = "LUMI1021";
+    public const string ConstraintNotSatisfied = "LUMI1022";
+    public const string GenericInstantiationTooDeep = "LUMI1023";
     public const string CircularImport = "LUMI5001";
     public const string ModuleNotFound = "LUMI5002";
 

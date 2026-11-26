@@ -7,6 +7,7 @@ public enum TokenType
     KeywordSwitch,
     KeywordDefault,
     KeywordDefer,
+    KeywordWhere,
     FatArrow,
     KeywordLet,
     KeywordAs,

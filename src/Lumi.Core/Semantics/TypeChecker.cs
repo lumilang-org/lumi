@@ -69,6 +69,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
     public void CheckCompilationUnit(IReadOnlyList<ProgramNode> modules)
     {
         _returnAnalyzer.IsExhaustive = SemanticModel.IsExhaustiveSwitch;
+        new Monomorphizer(diagnostic).Expand(modules);
         _structs.Clear();
         _enums.Clear();
         _enumModules.Clear();

@@ -393,6 +393,33 @@ func work() -> i32 {
 * `return` inside a `defer` body is `LUMI1019`; so is a `break`/`continue` that would leave it (a loop inside the body may use them).
 * A `defer` is skipped on paths that never reach it.
 
+### 7.6 Generics
+
+```
+struct Box<T> {
+    pub T value
+    pub func get(*Box<T> self) -> T { return self.value }
+}
+
+struct Mover<T> where T : Vec2 { pub T pos }
+
+func twice<T>(T v) -> T { return v }
+func step<T>(T v) -> T where T : Vec2 { return v }
+
+func main() {
+    Box<Box<i32>> b = Box<Box<i32>> { value: Box<i32> { value: 1 } }
+    let n = twice<i32>(21)
+    let v = step<Vec2>(Vec2 { x: 1, y: 2 })
+}
+```
+
+* Generics are monomorphized: every distinct `Name<Args>` becomes a concrete struct or function named `Name__Args` (`Box__i32`, `Box__Box__i32`, `step__Vec2`). Specializations are cached, so each combination is generated once. Templates themselves are never type-checked or emitted; each specialization is fully checked (including `switch` exhaustiveness, `defer` and visibility).
+* Type arguments are always explicit (`twice<i32>(1)`); they are not inferred. `>>` closes two nested lists.
+* `where T : Bound` (comma separated: `where T : Vec2, U : i32`) requires the type argument to be exactly `Bound`. A violation is `LUMI1022`; the specialization is not generated.
+* `LUMI1020`: empty or duplicate type parameter list, or a `where` clause naming an undeclared parameter, repeating a parameter, or using an unknown bound. `LUMI1021`: wrong number of type arguments. `LUMI1023`: instantiation nests more than 24 levels (for example `struct Grow<T> { Grow<Grow<T>> inner }`).
+* `<` is treated as type arguments only after the name of a generic declared in the same file; elsewhere it stays the comparison operator.
+* Limits: generics are resolved inside the module that declares them (no cross-module `other::Box<i32>`), struct functions cannot declare their own type parameters, and enums cannot be generic.
+
 ---
 
 ## 8. Built-in Statements

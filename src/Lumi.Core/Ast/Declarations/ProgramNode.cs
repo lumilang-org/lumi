@@ -15,8 +15,18 @@ public sealed class ProgramNode(
     public string FileName { get; } = fileName;
     public ModuleDeclarationNode? Module { get; } = module;
     public IReadOnlyList<ImportDeclarationNode> Imports { get; } = imports;
-    public IReadOnlyList<FunctionDeclarationNode> Functions { get; } = functions;
-    public IReadOnlyList<StructDeclarationNode> Structs { get; } = structs;
+    private readonly List<FunctionDeclarationNode> _functions = [..functions];
+    private readonly List<StructDeclarationNode> _structs = [..structs];
+
+    public IReadOnlyList<FunctionDeclarationNode> Functions => _functions;
+    public IReadOnlyList<StructDeclarationNode> Structs => _structs;
+
+    // Generic templates are kept apart: only their specializations are checked and emitted.
+    public List<FunctionDeclarationNode> GenericFunctions { get; } = [];
+    public List<StructDeclarationNode> GenericStructs { get; } = [];
+
+    public void AddSpecialization(FunctionDeclarationNode function) => _functions.Add(function);
+    public void AddSpecialization(StructDeclarationNode structDecl) => _structs.Add(structDecl);
     public IReadOnlyList<EnumDeclarationNode> Enums { get; } = enums;
     public IReadOnlyList<ExternFunctionDeclarationNode> ExternFunctions { get; } = externFunctions;
 

@@ -12,6 +12,13 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 {
     private int _position;
 
+    // Second `>` of a `>>` token that closed two type-argument lists at once.
+    private int _pendingCloseAngle;
+
+    // Names declared as generic (`func name<T>`, `struct Name<T>`) in this file. Only these
+    // names may be followed by `<T>` type arguments, so `a < b` stays a comparison.
+    private HashSet<string> _genericNames = [];
+
     // Helper properties to read the current and upcoming tokens
     private Token Current => Peek(0);
     private Token Next => Peek(1);
@@ -163,7 +170,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             visibility);
     }
 
-    private FunctionDeclarationNode ParseFunction()
+    private FunctionDeclarationNode ParseFunction(bool isMethod = false)
     {
         var currentModifier = VisibilityModifier.Private;
 
@@ -176,7 +183,18 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         var start = Consume(TokenType.KeywordFunc);
 
         var funcName = Current.Value;
-        Consume(TokenType.Identifier);
+        var funcNameToken = Consume(TokenType.Identifier);
+
+        var typeParameters = ParseTypeParameters();
+
+        if (isMethod && typeParameters.Count > 0)
+        {
+            Report(
+                DiagnosticCodes.InvalidTypeParameters,
+                $"Struct function '{funcName}' cannot declare its own type parameters; " +
+                "use the type parameters of the struct.",
+                funcNameToken.Span);
+        }
 
         Consume(TokenType.LParen);
 
@@ -184,6 +202,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
         Consume(TokenType.RParen);
         var returnType = ParseOptionalReturnType();
+        var constraints = ParseWhereClause(typeParameters);
 
         Consume(TokenType.LBrace);
 
@@ -207,7 +226,221 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             returnType,
             body,
             span,
-            currentModifier);
+            currentModifier,
+            typeParameters,
+            constraints);
+    }
+
+    // `<T, U>` after a declaration name; empty when absent.
+    private List<string> ParseTypeParameters()
+    {
+        var names = new List<string>();
+
+        if (Current.Type != TokenType.LessThan)
+        {
+            return names;
+        }
+
+        var open = Consume(TokenType.LessThan);
+
+        if (Current.Type == TokenType.GreaterThan)
+        {
+            Report(
+                DiagnosticCodes.InvalidTypeParameters,
+                "Syntax Error: A type parameter list cannot be empty; write '<T>' or remove '<>'.",
+                open.Span);
+            throw new ParseException();
+        }
+
+        while (true)
+        {
+            var nameToken = Consume(TokenType.Identifier);
+
+            if (names.Contains(nameToken.Value))
+            {
+                Report(
+                    DiagnosticCodes.InvalidTypeParameters,
+                    $"Duplicate type parameter '{nameToken.Value}'.",
+                    nameToken.Span);
+            }
+            else
+            {
+                names.Add(nameToken.Value);
+            }
+
+            if (Current.Type != TokenType.Comma)
+            {
+                break;
+            }
+
+            Consume(TokenType.Comma);
+        }
+
+        Consume(TokenType.GreaterThan);
+        return names;
+    }
+
+    // `where T : Vec2, U : i32`
+    private List<TypeConstraintNode> ParseWhereClause(IReadOnlyList<string> typeParameters)
+    {
+        var constraints = new List<TypeConstraintNode>();
+
+        if (Current.Type != TokenType.KeywordWhere)
+        {
+            return constraints;
+        }
+
+        Consume(TokenType.KeywordWhere);
+
+        while (true)
+        {
+            var parameterToken = Consume(TokenType.Identifier);
+            Consume(TokenType.Colon);
+            var boundStart = Current;
+            var bound = ParseTypeName();
+            var span = CreateSpan(parameterToken.Span.Start, Peek(-1).Span.End);
+
+            if (!typeParameters.Contains(parameterToken.Value))
+            {
+                Report(
+                    DiagnosticCodes.InvalidTypeParameters,
+                    $"Constraint refers to '{parameterToken.Value}', which is not a type parameter of this declaration.",
+                    parameterToken.Span);
+            }
+            else if (constraints.Any(c => c.Parameter == parameterToken.Value))
+            {
+                Report(
+                    DiagnosticCodes.InvalidTypeParameters,
+                    $"Type parameter '{parameterToken.Value}' already has a bound.",
+                    boundStart.Span);
+            }
+            else
+            {
+                constraints.Add(new TypeConstraintNode(parameterToken.Value, bound, span));
+            }
+
+            if (Current.Type != TokenType.Comma)
+            {
+                break;
+            }
+
+            Consume(TokenType.Comma);
+        }
+
+        return constraints;
+    }
+
+    // `<A, B>` after a generic name in a type or expression, as the canonical text "<A, B>".
+    private string ParseTypeArguments()
+    {
+        var open = Consume(TokenType.LessThan);
+
+        if (Current.Type == TokenType.GreaterThan)
+        {
+            Report(
+                DiagnosticCodes.InvalidTypeParameters,
+                "Syntax Error: A type argument list cannot be empty.",
+                open.Span);
+            throw new ParseException();
+        }
+
+        var arguments = new List<string> { ParseTypeName() };
+
+        while (Current.Type == TokenType.Comma)
+        {
+            Consume(TokenType.Comma);
+            arguments.Add(ParseTypeName());
+        }
+
+        ExpectCloseAngle();
+        return "<" + string.Join(", ", arguments) + ">";
+    }
+
+    // Closes a type-argument list; `>>` closes two nested lists (`Box<Box<i32>>`).
+    private void ExpectCloseAngle()
+    {
+        if (_pendingCloseAngle > 0)
+        {
+            _pendingCloseAngle--;
+            return;
+        }
+
+        if (Current.Type == TokenType.GreaterThan)
+        {
+            Advance();
+            return;
+        }
+
+        if (Current.Type == TokenType.RightShift)
+        {
+            Advance();
+            _pendingCloseAngle = 1;
+            return;
+        }
+
+        Report(
+            DiagnosticCodes.ExpectedToken,
+            $"Syntax Error: Expected '>' to close the type argument list, got {Current.Type} ('{Current.Value}')",
+            Current.Span);
+        throw new ParseException();
+    }
+
+    // Returns the offset just past a well-formed `<...>` starting at `offset`, or -1.
+    private int ScanTypeArguments(int offset)
+    {
+        if (Peek(offset).Type != TokenType.LessThan)
+        {
+            return -1;
+        }
+
+        var depth = 0;
+
+        while (true)
+        {
+            var type = Peek(offset).Type;
+
+            switch (type)
+            {
+                case TokenType.LessThan:
+                    depth++;
+                    break;
+                case TokenType.GreaterThan:
+                    depth--;
+                    break;
+                case TokenType.RightShift:
+                    depth -= 2;
+                    break;
+                case TokenType.Identifier or TokenType.Star or TokenType.Comma or TokenType.LParen
+                    or TokenType.RParen or TokenType.LBracket or TokenType.RBracket or TokenType.Number
+                    or TokenType.DoubleColon:
+                    break;
+                default:
+                    if (!IsTypeToken(type))
+                    {
+                        return -1;
+                    }
+
+                    break;
+            }
+
+            offset++;
+
+            if (depth < 0)
+            {
+                return -1;
+            }
+
+            if (depth == 0)
+            {
+                return offset;
+            }
+        }
+    }
+
+    private bool IsGenericName(string name)
+    {
+        var separator = name.LastIndexOf("::", StringComparison.Ordinal);
+        return _genericNames.Contains(separator >= 0 ? name[(separator + 2)..] : name);
     }
 
 
@@ -219,6 +452,10 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         var externFunctions = new List<ExternFunctionDeclarationNode>();
         var structs = new List<StructDeclarationNode>();
         var enums = new List<EnumDeclarationNode>();
+
+        _genericNames = CollectGenericNames();
+        var genericFunctions = new List<FunctionDeclarationNode>();
+        var genericStructs = new List<StructDeclarationNode>();
 
         if (Current.Type == TokenType.KeywordModule)
         {
@@ -244,7 +481,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
                 }
                 else if (declarationKind == TokenType.KeywordStruct)
                 {
-                    structs.Add(ParseStructDeclaration());
+                    var parsedStruct = ParseStructDeclaration();
+                    (parsedStruct.TypeParameters.Count > 0 ? genericStructs : structs).Add(parsedStruct);
                 }
                 else if (declarationKind == TokenType.KeywordExtern)
                 {
@@ -252,7 +490,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
                 }
                 else
                 {
-                    functions.Add(ParseFunction());
+                    var parsedFunction = ParseFunction();
+                    (parsedFunction.TypeParameters.Count > 0 ? genericFunctions : functions).Add(parsedFunction);
                 }
             }
             catch (ParseException)
@@ -278,7 +517,27 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
         var span = CreateSpan(startSpan.Start, endSpan.End);
 
-        return new ProgramNode(module, imports, functions, structs, enums, externFunctions, span, fileName);
+        var program = new ProgramNode(module, imports, functions, structs, enums, externFunctions, span, fileName);
+        program.GenericFunctions.AddRange(genericFunctions);
+        program.GenericStructs.AddRange(genericStructs);
+        return program;
+    }
+
+    private HashSet<string> CollectGenericNames()
+    {
+        var names = new HashSet<string>();
+
+        for (var i = 0; i + 2 < tokens.Count; i++)
+        {
+            if (tokens[i].Type is TokenType.KeywordFunc or TokenType.KeywordStruct &&
+                tokens[i + 1].Type == TokenType.Identifier &&
+                tokens[i + 2].Type == TokenType.LessThan)
+            {
+                names.Add(tokens[i + 1].Value);
+            }
+        }
+
+        return names;
     }
 
     private ModuleDeclarationNode ParseModuleDeclaration()
@@ -340,6 +599,9 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         var structName = nameToken.Value;
         Consume(TokenType.Identifier);
 
+        var typeParameters = ParseTypeParameters();
+        var constraints = ParseWhereClause(typeParameters);
+
         Consume(TokenType.LBrace);
 
         var fields = new List<StructFieldNode>();
@@ -351,7 +613,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             if (Current.Type == TokenType.KeywordFunc ||
                 (Current.Type == TokenType.KeywordPub && Peek(1).Type == TokenType.KeywordFunc))
             {
-                methods.Add(ParseFunction());
+                methods.Add(ParseFunction(isMethod: true));
                 continue;
             }
 
@@ -404,7 +666,9 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             fields,
             methods,
             span,
-            currentModifier);
+            currentModifier,
+            typeParameters,
+            constraints);
     }
 
     private EnumDeclarationNode ParseEnumDeclaration()
@@ -640,6 +904,11 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
                 Consume(TokenType.DoubleColon);
                 typeName += "::" + Consume(TokenType.Identifier).Value;
             }
+
+            if (Current.Type == TokenType.LessThan && IsGenericName(typeName))
+            {
+                typeName += ParseTypeArguments();
+            }
         }
 
         for (var i = 0; i < pointerDepth; i++)
@@ -778,6 +1047,16 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             }
 
             offset++; // Consume identifier
+        }
+
+        // `Box<i32> name`: type arguments of a generic type.
+        if (Peek(offset).Type == TokenType.LessThan && IsGenericName(Peek(offset - 1).Value))
+        {
+            offset = ScanTypeArguments(offset);
+            if (offset < 0)
+            {
+                return false;
+            }
         }
 
         return IsTypeSuffixThenName(offset);
@@ -1687,6 +1966,16 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         {
             Consume(TokenType.DoubleColon);
             name += "::" + Consume(TokenType.Identifier).Value;
+        }
+
+        // `step<Vec2>(...)`, `Box<i32> { ... }`, `Box<i32>.new(...)`
+        if (Current.Type == TokenType.LessThan && IsGenericName(name))
+        {
+            var scanEnd = ScanTypeArguments(0);
+            if (scanEnd >= 0 && Peek(scanEnd).Type is TokenType.LParen or TokenType.LBrace or TokenType.Dot)
+            {
+                name += ParseTypeArguments();
+            }
         }
 
         // `Name {` only starts a struct literal when followed by `field:`, so
