@@ -28,6 +28,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
     private string _currentModulePrefix = "";
     private int _loopDepth;
     private int _switchDepth;
+    private int _deferDepth;
     public SemanticModel SemanticModel { get; } = new();
     private FunctionRegistry Functions => SemanticModel.Functions;
 
@@ -553,6 +554,13 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
             case ReturnStatementNode returnStatement:
             {
+                if (_deferDepth > 0)
+                {
+                    Report(DiagnosticCodes.InvalidDefer,
+                        "'return' cannot be used inside a 'defer' body.",
+                        returnStatement.Span);
+                }
+
                 if (returnStatement.Expression is null)
                 {
                     if (expectedReturnType != TypeConst.Void)
@@ -675,8 +683,17 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                 CheckSwitch(switchStatement, scope, expectedReturnType);
                 break;
 
+            case DeferStatementNode deferStatement:
+                CheckDefer(deferStatement, scope, expectedReturnType);
+                break;
+
             case BreakStatementNode breakStmt:
-                if (_loopDepth == 0 && _switchDepth == 0)
+                if (_loopDepth == 0 && _switchDepth == 0 && _deferDepth > 0)
+                {
+                    Report(DiagnosticCodes.InvalidDefer,
+                        "'break' cannot leave a 'defer' body.", breakStmt.Span);
+                }
+                else if (_loopDepth == 0 && _switchDepth == 0)
                 {
                     Report(DiagnosticCodes.BreakOutsideLoop, "'break' can only be used inside a loop or switch.", breakStmt.Span);
                 }
@@ -684,7 +701,12 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                 break;
 
             case ContinueStatementNode continueStatement:
-                if (_loopDepth == 0)
+                if (_loopDepth == 0 && _deferDepth > 0)
+                {
+                    Report(DiagnosticCodes.InvalidDefer,
+                        "'continue' cannot leave a 'defer' body.", continueStatement.Span);
+                }
+                else if (_loopDepth == 0)
                 {
                     Report(DiagnosticCodes.ContinueOutsideLoop, "'continue' can only be used inside a loop.",
                         continueStatement.Span);
@@ -887,6 +909,31 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
                 break;
             }
+        }
+    }
+
+    private void CheckDefer(DeferStatementNode node, SymbolTable scope, string expectedReturnType)
+    {
+        // The body sees every variable visible at the `defer`; jumps cannot leave it.
+        var bodyScope = new SymbolTable(scope);
+        var savedLoopDepth = _loopDepth;
+        var savedSwitchDepth = _switchDepth;
+        _loopDepth = 0;
+        _switchDepth = 0;
+        _deferDepth++;
+
+        try
+        {
+            foreach (var stmt in node.Body)
+            {
+                CheckStatement(stmt, bodyScope, expectedReturnType);
+            }
+        }
+        finally
+        {
+            _deferDepth--;
+            _loopDepth = savedLoopDepth;
+            _switchDepth = savedSwitchDepth;
         }
     }
 

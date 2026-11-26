@@ -204,7 +204,7 @@ public sealed partial class Codegen
         }
 
         var continueTarget = _loopTargets.Count > 0 ? _loopTargets.Peek().ContinueTarget : endBlock;
-        _loopTargets.Push(new LoopTargets(endBlock, continueTarget));
+        _loopTargets.Push(NewSwitchTargets(endBlock, continueTarget));
 
         try
         {

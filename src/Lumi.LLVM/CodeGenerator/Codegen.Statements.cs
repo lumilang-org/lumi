@@ -93,6 +93,7 @@ public sealed partial class Codegen
             {
                 if (returnStatement.Expression is null)
                 {
+                    EmitDefers(0);
                     _builder.BuildRetVoid();
                     break;
                 }
@@ -108,6 +109,9 @@ public sealed partial class Codegen
                     _currentReturnTypeName,
                     "ret_cast");
 
+                // The value above is already computed (an SSA value), so deferred
+                // cleanup that runs now cannot change what is returned.
+                EmitDefers(0);
                 _builder.BuildRet(returnValue);
                 break;
             }
@@ -183,6 +187,10 @@ public sealed partial class Codegen
             }
             case SwitchStatementNode switchStmt:
                 GenerateSwitchStatement(switchStmt);
+                break;
+
+            case DeferStatementNode deferStatement:
+                _deferFrames[^1].Add(new DeferredAction(deferStatement, _currentScope));
                 break;
 
             case BreakStatementNode:
@@ -284,9 +292,7 @@ public sealed partial class Codegen
             }
 
             // Register break and continue targets.
-            _loopTargets.Push(new LoopTargets(
-                exitBlock,
-                updateBlock));
+            _loopTargets.Push(NewLoopTargets(exitBlock, updateBlock));
 
             try
             {
@@ -375,7 +381,7 @@ public sealed partial class Codegen
         _builder.BuildCondBr(inRange, bodyBlock, endBlock);
 
         _currentScope = _currentScope.EnterScope();
-        _loopTargets.Push(new LoopTargets(endBlock, latchBlock));
+        _loopTargets.Push(NewLoopTargets(endBlock, latchBlock));
 
         try
         {
@@ -462,7 +468,7 @@ public sealed partial class Codegen
 
         // `break` leaves the switch; `continue` still targets the enclosing loop.
         var continueTarget = _loopTargets.Count > 0 ? _loopTargets.Peek().ContinueTarget : endBlock;
-        _loopTargets.Push(new LoopTargets(endBlock, continueTarget));
+        _loopTargets.Push(NewSwitchTargets(endBlock, continueTarget));
 
         try
         {
@@ -515,9 +521,7 @@ public sealed partial class Codegen
         _builder.BuildCondBr(condition, bodyBlock, exitBlock);
 
         // Register targets for break and continue.
-        _loopTargets.Push(new LoopTargets(
-            exitBlock,
-            conditionBlock));
+        _loopTargets.Push(NewLoopTargets(exitBlock, conditionBlock));
 
         try
         {
@@ -639,7 +643,9 @@ public sealed partial class Codegen
                 "'break' can only be used inside a loop.");
         }
 
-        _builder.BuildBr(_loopTargets.Peek().BreakTarget);
+        var target = _loopTargets.Peek();
+        EmitDefers(target.BreakDeferDepth);
+        _builder.BuildBr(target.BreakTarget);
     }
 
     private void GenerateContinueStatement()
@@ -650,7 +656,9 @@ public sealed partial class Codegen
                 "'continue' can only be used inside a loop.");
         }
 
-        _builder.BuildBr(_loopTargets.Peek().ContinueTarget);
+        var target = _loopTargets.Peek();
+        EmitDefers(target.ContinueDeferDepth);
+        _builder.BuildBr(target.ContinueTarget);
     }
 
     private static bool HasTerminator(LLVMBasicBlockRef block)
@@ -675,7 +683,83 @@ public sealed partial class Codegen
             LLVMOpcode.LLVMCatchSwitch;
     }
 
+    private LoopTargets NewLoopTargets(LLVMBasicBlockRef breakTarget, LLVMBasicBlockRef continueTarget)
+    {
+        return new LoopTargets(breakTarget, continueTarget, _deferFrames.Count, _deferFrames.Count);
+    }
+
+    // `break` leaves the switch; `continue` still unwinds to the enclosing loop.
+    private LoopTargets NewSwitchTargets(LLVMBasicBlockRef breakTarget, LLVMBasicBlockRef continueTarget)
+    {
+        var continueDepth = _loopTargets.Count > 0
+            ? _loopTargets.Peek().ContinueDeferDepth
+            : _deferFrames.Count;
+
+        return new LoopTargets(breakTarget, continueTarget, _deferFrames.Count, continueDepth);
+    }
+
+    // Runs the deferred actions of every frame at index >= firstFrame, innermost
+    // frame first and last-declared first (LIFO). The frames stay registered.
+    private void EmitDefers(int firstFrame)
+    {
+        for (var i = _deferFrames.Count - 1; i >= firstFrame; i--)
+        {
+            EmitFrameDefers(i);
+        }
+    }
+
+    private void EmitFrameDefers(int frameIndex)
+    {
+        var actions = _deferFrames[frameIndex].ToList();
+
+        if (actions.Count == 0)
+        {
+            return;
+        }
+
+        // While a deferred body is generated, only the frames outside it are active.
+        var hidden = _deferFrames.GetRange(frameIndex, _deferFrames.Count - frameIndex);
+        _deferFrames.RemoveRange(frameIndex, hidden.Count);
+        var savedScope = _currentScope;
+
+        try
+        {
+            for (var j = actions.Count - 1; j >= 0; j--)
+            {
+                _currentScope = actions[j].Scope.EnterScope();
+                GenerateStatements(actions[j].Statement.Body);
+            }
+        }
+        finally
+        {
+            _currentScope = savedScope;
+            _deferFrames.AddRange(hidden);
+        }
+    }
+
     private void GenerateStatements(
+        IReadOnlyList<StatementNode> statements)
+    {
+        _deferFrames.Add(new List<DeferredAction>());
+        var frameIndex = _deferFrames.Count - 1;
+
+        try
+        {
+            GenerateFrameStatements(statements);
+
+            // Leaving the block normally: run this block's own defers.
+            if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+            {
+                EmitFrameDefers(frameIndex);
+            }
+        }
+        finally
+        {
+            _deferFrames.RemoveAt(frameIndex);
+        }
+    }
+
+    private void GenerateFrameStatements(
         IReadOnlyList<StatementNode> statements)
     {
         foreach (var statement in statements)

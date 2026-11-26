@@ -13,6 +13,7 @@ public sealed class Lexer
         { TypeConst.Pub, TokenType.KeywordPub },
         { TypeConst.Switch, TokenType.KeywordSwitch },
         { TypeConst.Default, TokenType.KeywordDefault },
+        { TypeConst.Defer, TokenType.KeywordDefer },
         { TypeConst.Let, TokenType.KeywordLet },
         { TypeConst.As, TokenType.KeywordAs },
         { TypeConst.In, TokenType.KeywordIn },

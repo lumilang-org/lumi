@@ -38,6 +38,7 @@ public static class DiagnosticCodes
     public const string PrivateAccess = "LUMI1016";
     public const string DuplicateCase = "LUMI1017";
     public const string InvalidSwitch = "LUMI1018";
+    public const string InvalidDefer = "LUMI1019";
     public const string CircularImport = "LUMI5001";
     public const string ModuleNotFound = "LUMI5002";
 

@@ -371,6 +371,28 @@ for u32 i = 0; i < 10; i = i + 1 {
 * `break`: Immediately exits the innermost loop.
 * `continue`: Skips the remainder of the current loop iteration and advances to the update/condition evaluation.
 
+### 7.5 `defer`
+
+```
+func work() -> i32 {
+    Arena arena
+    arena.init(1024)
+    defer arena.destroy()      // single statement
+    defer {                    // or a block
+        println(1)
+        println(2)
+    }
+    return 42
+}
+```
+
+* `defer` runs its statement (or block) when the enclosing block is left: by reaching its end, or by `break`, `continue` or `return`.
+* Deferred statements run in LIFO order (last `defer` first), innermost block first. Each loop iteration runs the `defer`s registered in that iteration.
+* The body is checked where it is written, so it sees the variables declared before it. It runs later, so it observes their values at that time.
+* `return <expr>` evaluates `<expr>` first, then runs the `defer`s, so cleanup cannot change the returned value.
+* `return` inside a `defer` body is `LUMI1019`; so is a `break`/`continue` that would leave it (a loop inside the body may use them).
+* A `defer` is skipped on paths that never reach it.
+
 ---
 
 ## 8. Built-in Statements

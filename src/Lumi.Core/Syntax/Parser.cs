@@ -918,6 +918,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
 
                 return new ReturnStatementNode(value, span);
             }
+            case TokenType.KeywordDefer:
+                return ParseDeferStatement();
             case TokenType.KeywordIf:
                 return ParseIfStatement();
             case TokenType.KeywordWhile:
@@ -1081,6 +1083,20 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
             TokenType.TypeF64 or
             TokenType.TypeBool or
             TokenType.TypeChar;
+    }
+
+    private DeferStatementNode ParseDeferStatement()
+    {
+        var deferToken = Consume(TokenType.KeywordDefer);
+
+        if (Current.Type == TokenType.LBrace)
+        {
+            var block = ParseBlock(out var blockSpan);
+            return new DeferStatementNode(block, CreateSpan(deferToken.Span.Start, blockSpan.End));
+        }
+
+        var statement = ParseStatement();
+        return new DeferStatementNode([statement], CreateSpan(deferToken.Span.Start, statement.Span.End));
     }
 
     private SwitchStatementNode ParseSwitchStatement()

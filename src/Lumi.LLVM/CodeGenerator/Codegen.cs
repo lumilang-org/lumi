@@ -1,5 +1,6 @@
 using LLVMSharp.Interop;
 using Lumi.Core.Ast.Declarations;
+using Lumi.Core.Ast.Statements;
 using Lumi.Core.Semantics;
 using Lumi.Core.Syntax;
 using Lumi.LLVM.Helpers;
@@ -11,6 +12,10 @@ public sealed partial class Codegen
 {
     private readonly LLVMBuilderRef _builder;
     private readonly LLVMContextRef _context;
+    private readonly LLVMTargetDataRef _dataLayout;
+
+    // One list of deferred actions per block being generated.
+    private readonly List<List<DeferredAction>> _deferFrames = new();
     private readonly Dictionary<string, (LLVMValueRef Function, LLVMTypeRef FunctionType)> _functions = new();
     private readonly LlvmTypeHelper _llvmTypeHelper;
     private readonly Stack<LoopTargets> _loopTargets = new();
@@ -20,7 +25,6 @@ public sealed partial class Codegen
     // Identical string literals share one private constant global per module.
     private readonly Dictionary<string, LLVMValueRef> _stringLiterals = new();
     private readonly Dictionary<string, StructLayoutInfo> _structLayouts = new();
-    private readonly LLVMTargetDataRef _dataLayout;
     private readonly LLVMTypeRef _usizeType;
 
     // Track the return type of the function currently being generated
@@ -243,5 +247,10 @@ public sealed partial class Codegen
 
     private sealed record LoopTargets(
         LLVMBasicBlockRef BreakTarget,
-        LLVMBasicBlockRef ContinueTarget);
+        LLVMBasicBlockRef ContinueTarget,
+        int BreakDeferDepth,
+        int ContinueDeferDepth);
+
+    // A `defer` registered in a block, with the lexical scope it was written in.
+    private sealed record DeferredAction(DeferStatementNode Statement, VariableScope Scope);
 }
