@@ -1306,8 +1306,8 @@ func main() -> void {
                  {
                      "func main() -> void { let x = nil }",
                      "func f() -> void { }\nfunc main() -> void { let x = f() }",
-                     "func main() -> void { let x: i32 = true }",
-                     "func main() -> void { *u8 p = nil\n let x: *i32 = p }"
+                     "func main() -> void { i32 x = true }",
+                     "func main() -> void { *u8 p = nil\n *i32 x = p }"
                  })
         {
             var (_, _, diagnostics) = Check(source);
@@ -1318,7 +1318,7 @@ func main() -> void {
         var (_, _, nilDiagnostics) = Check("func main() -> void { let x = nil }");
         Assert.That(CountCode(nilDiagnostics, DiagnosticCodes.TypeMismatch), Is.EqualTo(1));
 
-        var (_, _, annotated) = Check("func main() -> void { let x: i32 = true }");
+        var (_, _, annotated) = Check("func main() -> void { i32 x = true }");
         Assert.That(CountCode(annotated, DiagnosticCodes.TypeMismatch), Is.EqualTo(1));
 
         var (_, _, duplicate) = Check("func main() -> void { let x = 1\n let x = 2 }");

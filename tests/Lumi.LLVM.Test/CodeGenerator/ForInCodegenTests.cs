@@ -49,7 +49,7 @@ func main() -> void {
     for p in pairs { println(p.a + p.b) }
 
     Box box = Box { vals: [5, 6, 7] }
-    let total: i64 = 0
+    i64 total = 0
     for v in box.vals { total = total + v }
     println(total)
 

@@ -1115,6 +1115,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
     {
         var start = Consume(TokenType.KeywordLet);
         var pattern = ParseTuplePattern();
+        RejectLetTypeAnnotation();
         Consume(TokenType.Assign);
         var initializer = ParseExpression();
 
@@ -2022,12 +2023,27 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         return new FunctionCallExpressionNode(name, arguments, span);
     }
 
+    private void RejectLetTypeAnnotation()
+    {
+        if (Current.Type != TokenType.Colon)
+        {
+            return;
+        }
+
+        Report(
+            DiagnosticCodes.ExpectedToken,
+            "Syntax Error: 'let' infers the type and cannot have a ': Type' annotation. " +
+            "Write 'let x = expr', or declare the type with '<Type> <name> = expr' (for example 'u8 x = 10').",
+            Current.Span);
+        throw new ParseException();
+    }
+
     private VariableDeclarationNode ParseVariableDeclaration()
     {
         var start = Current.Span.Start;
 
         // `let name = expr` infers the type (TypeConst.Let marks it for the type checker);
-        // `let name: Type = expr` is an ordinary declaration with the type after the name.
+        // typed declarations are written `Type name = expr`, never `let name: Type`.
         var isLet = Current.Type == TokenType.KeywordLet;
         var type = isLet ? Consume(TokenType.KeywordLet).Value : ParseTypeName();
 
@@ -2035,10 +2051,9 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
         var name = nameToken.Value;
         Consume(TokenType.Identifier);
 
-        if (isLet && Current.Type == TokenType.Colon)
+        if (isLet)
         {
-            Consume(TokenType.Colon);
-            type = ParseTypeName();
+            RejectLetTypeAnnotation();
         }
 
         ExpressionNode? initializer = null;

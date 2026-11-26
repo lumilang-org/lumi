@@ -52,7 +52,7 @@ func main() -> void {
     println(sizeof(Entity))
     let pair = Entity { id: 1, hp: 2 }
     println(pair.hp)
-    let big: i64 = 5000000000
+    i64 big = 5000000000
     println(big)
     arena.destroy()
 }"));

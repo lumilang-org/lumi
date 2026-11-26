@@ -332,7 +332,7 @@ func main() -> void {
     buf[2] = buf[0]
     buf[1].qty++
     r.items[r.count + 1].x = 5
-    let n: i64 = 1
+    i64 n = 1
     println(buf[0].id)
     println(buf[1].id)
     println(buf[2].id)

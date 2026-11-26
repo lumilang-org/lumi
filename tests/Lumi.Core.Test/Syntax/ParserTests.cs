@@ -631,9 +631,9 @@ func main() -> usize {
     }
 
     [Test]
-    public void Parse_Let_InferredAndAnnotated()
+    public void Parse_Let_InferredAndTyped()
     {
-        var program = Parse("func main() -> void { let x = 20\n let y: i64 = 5\n let s = \"Sam\" }");
+        var program = Parse("func main() -> void { let x = 20\n i64 y = 5\n let s = \"Sam\" }");
         var body = program.Functions[0].Body;
 
         var inferred = (VariableDeclarationNode)body[0];
@@ -646,6 +646,33 @@ func main() -> usize {
         Assert.That(annotated.Name, Is.EqualTo("y"));
 
         Assert.That(((VariableDeclarationNode)body[2]).Initializer, Is.InstanceOf<StringLiteralNode>());
+    }
+
+    [Test]
+    public void Parse_LetWithTypeAnnotation_IsRejected()
+    {
+        foreach (var source in new[]
+                 {
+                     "func main() -> void { let x: i32 = 10 }",
+                     "func main() -> void { let x: u8 }",
+                     "func main() -> void { let (a, b): (i32, i32) = (1, 2) }"
+                 })
+        {
+            var diagnostics = new DiagnosticBag();
+            var lexer = new Lexer(source, diagnostics, "t.lumi");
+            var tokens = new List<Token>();
+            Token token;
+            do
+            {
+                token = lexer.NextToken();
+                tokens.Add(token);
+            } while (token.Type != TokenType.EndOfFile);
+
+            new Parser(tokens, diagnostics, "t.lumi").ParseProgram();
+
+            Assert.That(diagnostics.HasErrors, Is.True, source);
+            Assert.That(diagnostics.Diagnostics.Any(d => d.Message.Contains("<Type> <name> = expr")), Is.True, source);
+        }
     }
 
     [Test]

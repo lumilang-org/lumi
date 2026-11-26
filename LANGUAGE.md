@@ -106,7 +106,7 @@ u16 counter = 20
 Vec p = Vec { x: 10, y: 20 }
 ```
 
-`let` infers the type from the initializer: `let x = 20` (`i32`), `let s = "Sam"`, `let p = raw as *Entity`, `let n = sizeof(Entity)` (`usize`). An initializer is required, and `nil` or a `void` call can't be inferred. `let x: i64 = 5` gives an explicit type, which is checked like any declaration.
+`let` infers the type from the initializer: `let x = 20` (`i32`), `let s = "Sam"`, `let p = raw as *Entity`, `let n = sizeof(Entity)` (`usize`). An initializer is required, and `nil` or a `void` call can't be inferred. `let` never takes a type annotation (`let x: i64 = 5` is a syntax error); declare an explicit type as `i64 x = 5` instead.
 
 ### 3.2 Assignment & Mutation
 
