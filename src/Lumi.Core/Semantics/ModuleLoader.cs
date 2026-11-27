@@ -51,7 +51,29 @@ public sealed class ModuleLoader(DiagnosticBag diagnostics)
 
         var lexer = new Lexer(source, diagnostics, filePath);
         var tokens = lexer.Tokenize();
-        var parser = new Parser(tokens, diagnostics, filePath);
+
+        // Imported modules are loaded first so their generic names are known while parsing this
+        // file (`Vec<i32> v` must parse as a type, not as comparisons).
+        var importedGenerics = new List<string>();
+        foreach (var import in ScanImports(tokens))
+        {
+            var importedPath = ResolveImport(filePath, import, report: false);
+            if (importedPath is null)
+            {
+                continue;
+            }
+
+            LoadInternal(importedPath);
+
+            if (_loadedModules.TryGetValue(importedPath, out var imported))
+            {
+                importedGenerics.AddRange(imported.GenericFunctions.Select(f => f.Name));
+                importedGenerics.AddRange(imported.GenericStructs.Select(s => s.Name));
+                importedGenerics.AddRange(imported.GenericEnums.Select(e => e.Name));
+            }
+        }
+
+        var parser = new Parser(tokens, diagnostics, filePath, importedGenerics);
         var program = parser.ParseProgram();
 
         foreach (var import in program.Imports)
@@ -68,7 +90,46 @@ public sealed class ModuleLoader(DiagnosticBag diagnostics)
         _orderedModules.Add(program);
     }
 
-    private string? ResolveImport(string currentFilePath, ImportDeclarationNode import)
+    // The `import a::b` lines at the top of a file, read straight from its tokens.
+    private static List<ImportDeclarationNode> ScanImports(IReadOnlyList<Token> tokens)
+    {
+        var imports = new List<ImportDeclarationNode>();
+
+        for (var i = 0; i < tokens.Count; i++)
+        {
+            if (tokens[i].Type != TokenType.KeywordImport)
+            {
+                continue;
+            }
+
+            var path = new List<string>();
+            var j = i + 1;
+
+            while (j < tokens.Count && tokens[j].Type == TokenType.Identifier)
+            {
+                path.Add(tokens[j].Value);
+                j++;
+
+                if (j < tokens.Count && tokens[j].Type == TokenType.DoubleColon)
+                {
+                    j++;
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            if (path.Count > 0)
+            {
+                imports.Add(new ImportDeclarationNode(path, tokens[i].Span));
+            }
+        }
+
+        return imports;
+    }
+
+    private string? ResolveImport(string currentFilePath, ImportDeclarationNode import, bool report = true)
     {
         var directory = Path.GetDirectoryName(currentFilePath) ?? ".";
 
@@ -99,11 +160,15 @@ public sealed class ModuleLoader(DiagnosticBag diagnostics)
             return absolutePath;
         }
 
-        diagnostics.Report(
-            currentFilePath,
-            DiagnosticCodes.ModuleNotFound,
-            $"Could not find module '{string.Join("::", import.PathSegments)}'",
-            import.Span);
+        if (report)
+        {
+            diagnostics.Report(
+                currentFilePath,
+                DiagnosticCodes.ModuleNotFound,
+                $"Could not find module '{string.Join("::", import.PathSegments)}'",
+                import.Span);
+        }
+
         return null;
     }
 }

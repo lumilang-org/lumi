@@ -8,7 +8,11 @@ using Lumi.Core.Semantics;
 
 namespace Lumi.Core.Syntax;
 
-public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostics, string fileName)
+public sealed class Parser(
+    IReadOnlyList<Token> tokens,
+    DiagnosticBag diagnostics,
+    string fileName,
+    IEnumerable<string>? importedGenericNames = null)
 {
     private int _position;
 
@@ -531,7 +535,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, DiagnosticBag diagnostic
     private HashSet<string> CollectGenericNames()
     {
         // The prelude generics (Option, Result) are available in every file.
-        var names = new HashSet<string>(BuiltinGenericRegistry.Names);
+        // Generics declared by imported modules are usable by name too.
+        var names = new HashSet<string>(BuiltinGenericRegistry.Names.Concat(importedGenericNames ?? []));
 
         for (var i = 0; i + 2 < tokens.Count; i++)
         {

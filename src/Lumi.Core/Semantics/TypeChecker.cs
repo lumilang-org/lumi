@@ -1624,6 +1624,8 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                     ? expectedType
                     : InferBoundsUtils.InferFloating(node),
 
+            IdentifierNode bare when TryCheckBareVariant(bare, bare.Name, [], expectedType, scope) is { } bareType =>
+                bareType,
             IdentifierNode id => CheckIdentifier(id, scope),
 
             BinaryExpressionNode binary =>
@@ -1652,6 +1654,9 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             ArrayLiteralNode arrayLiteral => CheckArrayLiteral(arrayLiteral, scope, expectedType),
             IndexExpressionNode indexExpression => CheckIndexExpression(indexExpression, scope),
             RangeIndexExpressionNode range => CheckRangeIndex(range, scope),
+            FunctionCallExpressionNode bareCall
+                when TryCheckBareVariant(bareCall, bareCall.Name, bareCall.Arguments, expectedType, scope) is { } bareType =>
+                bareType,
             FunctionCallExpressionNode functionCall => CheckFunctionCall(functionCall, scope),
             StructLiteralNode structLiteral => CheckStructLiteral(structLiteral, scope),
             EnumStructLiteralNode enumLiteral => CheckEnumStructVariant(enumLiteral, scope),
@@ -1839,6 +1844,71 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         }
 
         return ResolveType(field.Type);
+    }
+
+    // `None`, `Some(x)`, `Ok(x)`, `Err(e)` without the enum prefix: the variant of the built-in generic
+    // enum the context expects (a declared type, parameter, return type, ...). Null when the
+    // expression is not a bare variant, so the usual variable / function lookup applies.
+    private string? TryCheckBareVariant(
+        ExpressionNode node,
+        string name,
+        IReadOnlyList<ExpressionNode> arguments,
+        string? expectedType,
+        SymbolTable scope)
+    {
+        if (expectedType is null
+            || !_enums.TryGetValue(expectedType, out var decl)
+            || decl.GenericOrigin is null
+            || FindVariant(expectedType, name) is not { } variant)
+        {
+            return null;
+        }
+
+        var isCall = node is FunctionCallExpressionNode;
+        if (isCall ? Functions.Contains(ResolveSymbolName(name)) : scope.TryLookup(name, out _))
+        {
+            return null;
+        }
+
+        var display = $"{decl.GenericOrigin}.{name}";
+
+        if (variant.Kind == EnumVariantKind.Struct || (!isCall && variant.Kind != EnumVariantKind.Unit))
+        {
+            Report(DiagnosticCodes.TypeMismatch,
+                $"Variant '{display}' carries data; construct it as '{name}(...)'.", node.Span);
+            return TypeConst.Error;
+        }
+
+        if (arguments.Count != variant.Fields.Count)
+        {
+            Report(DiagnosticCodes.ArgumentCountMismatch,
+                $"Variant '{display}' expects {variant.Fields.Count} arguments, but received {arguments.Count}.",
+                node.Span);
+        }
+
+        for (var i = 0; i < arguments.Count; i++)
+        {
+            if (i >= variant.Fields.Count)
+            {
+                CheckExpression(arguments[i], scope);
+                continue;
+            }
+
+            var fieldType = SemanticModel.GetType(variant.Fields[i]);
+            var argumentType = CheckExpression(arguments[i], scope, fieldType);
+            SemanticModel.SetExpressionType(arguments[i], argumentType);
+
+            if (argumentType != TypeConst.Error && !CanAssign(fieldType, argumentType, arguments[i]))
+            {
+                Report(DiagnosticCodes.TypeMismatch,
+                    $"Type Mismatch: Argument {i + 1} of variant '{display}' expects '{fieldType}', but got '{argumentType}'.",
+                    arguments[i].Span);
+            }
+        }
+
+        SemanticModel.MarkEnumConstruction(node);
+        SemanticModel.SetMangledName(node, expectedType);
+        return expectedType;
     }
 
     private string CheckIdentifier(IdentifierNode identifier, SymbolTable scope)
@@ -2808,6 +2878,19 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         if (targetType == TypeConst.Error)
         {
             return TypeConst.Error;
+        }
+
+        // p[a..b] on a pointer: a slice over b - a elements from p + a. The pointer carries no
+        // length, so the end is required and only `a <= b` can be checked.
+        if (PointerTypes.IsPointer(targetType))
+        {
+            if (range.End is null)
+            {
+                Report(DiagnosticCodes.TypeMismatch,
+                    "A range of a pointer needs an end bound, such as 'p[0..n]'.", range.Span);
+            }
+
+            return SliceTypes.Make(PointerTypes.Pointee(targetType));
         }
 
         var isArray = IsArrayType(targetType);

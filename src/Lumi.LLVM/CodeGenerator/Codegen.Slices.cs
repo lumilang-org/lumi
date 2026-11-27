@@ -132,7 +132,16 @@ public sealed partial class Codegen
         LLVMValueRef length;
         string elementTypeName;
 
-        if (SliceTypes.IsSlice(receiverType))
+        var isPointer = PointerTypes.IsPointer(receiverType);
+
+        if (isPointer)
+        {
+            // No length is known: only start <= end is checked below.
+            elementTypeName = PointerTypes.Pointee(receiverType);
+            elements = receiver;
+            length = default;
+        }
+        else if (SliceTypes.IsSlice(receiverType))
         {
             elementTypeName = SliceTypes.Element(receiverType);
             elements = _builder.BuildExtractValue(receiver, 0, "range.ptr");
@@ -154,9 +163,13 @@ public sealed partial class Codegen
 
         // Unsigned comparisons reject a negative bound as a huge value: end <= len and start <= end
         // together mean 0 <= start <= end <= len.
-        var endInBounds = _builder.BuildICmp(LLVMIntPredicate.LLVMIntULE, end, length, "range.end.ok");
         var startBeforeEnd = _builder.BuildICmp(LLVMIntPredicate.LLVMIntULE, start, end, "range.start.ok");
-        var valid = _builder.BuildAnd(endInBounds, startBeforeEnd, "range.valid");
+        var valid = isPointer
+            ? startBeforeEnd
+            : _builder.BuildAnd(
+                _builder.BuildICmp(LLVMIntPredicate.LLVMIntULE, end, length, "range.end.ok"),
+                startBeforeEnd,
+                "range.valid");
 
         EmitAbortUnless(valid, "range");
 

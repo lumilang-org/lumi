@@ -130,4 +130,37 @@ switch r {
         var d = Check("Option o = Option { x: 1 }", "struct Option { i32 x }");
         Assert.That(d.HasErrors, Is.False, Messages(d));
     }
+
+    [Test]
+    public void Check_BareVariants_UseTheExpectedType()
+    {
+        var ok = Check(@"
+Option<i32> a = Some(1)
+Option<i32> b = None
+Option<i32> c = None()
+Result<i32, bool> r = Err(true)
+Result<i32, bool> q = Ok(2)");
+        var wrongPayload = Check("Option<i32> a = Some(true)");
+        var noneWithArgument = Check("Option<i32> a = None(1)");
+        var noContext = Check("let a = None");
+        var someWithoutParens = Check("Option<i32> a = Some");
+        var wrongEnum = Check("Option<i32> a = Ok(1)");
+
+        Assert.That(ok.HasErrors, Is.False, Messages(ok));
+        Assert.That(Count(wrongPayload, DiagnosticCodes.TypeMismatch), Is.EqualTo(1));
+        Assert.That(Count(noneWithArgument, DiagnosticCodes.ArgumentCountMismatch), Is.EqualTo(1));
+        Assert.That(Count(noContext, DiagnosticCodes.UndefinedVariable), Is.EqualTo(1));
+        Assert.That(Count(someWithoutParens, DiagnosticCodes.TypeMismatch), Is.GreaterThan(0));
+        Assert.That(wrongEnum.HasErrors, Is.True);
+    }
+
+    [Test]
+    public void Check_PointerRange_NeedsAnEnd()
+    {
+        var ok = Check("*i32 p = nil\ni32[] s = p[0..2]");
+        var open = Check("*i32 p = nil\ni32[] s = p[1..]");
+
+        Assert.That(ok.HasErrors, Is.False, Messages(ok));
+        Assert.That(Count(open, DiagnosticCodes.TypeMismatch), Is.EqualTo(1));
+    }
 }

@@ -1,0 +1,97 @@
+module std::vec
+
+import std::mem
+
+pub struct Vec<T> {
+    pub *Arena arena
+    pub *T buf
+    pub usize len
+    pub usize cap
+
+    pub func init(*Vec<T> self, *Arena arena, usize initial_cap) -> bool {
+        self.arena = arena
+        self.buf = nil
+        self.len = 0
+        self.cap = initial_cap
+
+        if self.arena == nil {
+            return false
+        }
+
+        if initial_cap > 0 {
+            usize bytes = initial_cap * sizeof(T)
+            *u8 raw = self.arena.alloc(bytes, sizeof(T))
+
+            if raw == nil {
+                return false
+            }
+
+            self.buf = raw as *T
+            self.cap = initial_cap
+        }
+
+        return true
+    }
+
+    pub func deinit(*Vec<T> self) {
+        self.buf = nil
+        self.arena = nil
+        self.len = 0
+        self.cap = 0
+    }
+
+    pub func push(*Vec<T> self, T value) -> bool {
+        if self.len >= self.cap && !self.grow() {
+            return false
+        }
+
+        self.buf[self.len] = value
+        self.len = self.len + 1
+        return true
+    }
+
+    func grow(*Vec<T> self) -> bool {
+        if self.arena == nil {
+            return false
+        }
+
+        usize next_cap = 4
+
+        if self.cap > 0 {
+            next_cap = self.cap * 2
+        }
+
+        usize next_bytes = next_cap * sizeof(T)
+        *u8 raw = self.arena.alloc(next_bytes, sizeof(T))
+
+        if raw == nil {
+            return false
+        }
+
+        let next_buf = raw as *T
+        usize i = 0
+
+        while i < self.len {
+            next_buf[i] = self.buf[i]
+            i = i + 1
+        }
+
+        self.buf = next_buf
+        self.cap = next_cap
+        return true
+    }
+
+    pub func pop(*Vec<T> self) -> Option<T> {
+        if self.len == 0 {
+            return None
+        }
+
+        self.len = self.len - 1
+        return Some(self.buf[self.len])
+    }
+
+    pub func as_slice(*Vec<T> self) -> T[] {
+        return self.buf[0..self.len]
+    }
+
+}

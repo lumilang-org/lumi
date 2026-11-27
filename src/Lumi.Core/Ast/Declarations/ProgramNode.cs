@@ -14,7 +14,18 @@ public sealed class ProgramNode(
 {
     public string FileName { get; } = fileName;
     public ModuleDeclarationNode? Module { get; } = module;
-    public IReadOnlyList<ImportDeclarationNode> Imports { get; } = imports;
+    private readonly List<ImportDeclarationNode> _imports = [..imports];
+    public IReadOnlyList<ImportDeclarationNode> Imports => _imports;
+
+    // Instantiating a generic declared in another module compiles its body here, so the names
+    // that module imports must resolve here too.
+    public void AddImport(ImportDeclarationNode import)
+    {
+        if (!_imports.Any(existing => existing.PathSegments.SequenceEqual(import.PathSegments)))
+        {
+            _imports.Add(import);
+        }
+    }
     private readonly List<FunctionDeclarationNode> _functions = [..functions];
     private readonly List<StructDeclarationNode> _structs = [..structs];
 

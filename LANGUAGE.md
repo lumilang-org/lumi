@@ -469,6 +469,13 @@ switch s.get(1) {          // Option<i32>
 
 A range must satisfy `0 <= start <= end <= len`. Bounds known at compile time that violate this are `LUMI1012`; otherwise the check happens when the program runs, and a violation terminates it (the same way an invalid shift amount does).
 
+### 7.9 Generics across modules, `std::vec`, bare variants and pointer ranges
+
+* **Generics from another module.** A `pub` generic struct, function or enum of an imported module is used by name: `import std::vec` makes `Vec<i32>` available. The specialization is compiled in the module that uses it, so a generic body may only name things visible there; instantiating it also imports whatever the generic's module imports (`Vec<T>` uses `Arena`, so `Arena` becomes available through `import std::vec`). Each module that instantiates `Vec<i32>` gets its own copy of the type.
+* **`std::vec`.** `Vec<T>` is an arena-backed growable array: `init(&arena, capacity) -> bool`, `push(value) -> bool`, `pop() -> Option<T>`, `as_slice() -> T[]` and `deinit()`, with public `len` and `cap` fields. Growing allocates a larger buffer from the arena and copies the elements; the old buffer stays in the arena until it is reset or destroyed. `as_slice()` is a view that is invalidated by a later `push` that grows the vector.
+* **Bare variants.** Where the expected type is `Option<T>` or `Result<T, E>` (a declared variable type, parameter, `return` in a function with that return type), the prefix can be left out: `return None`, `return Some(x)`, `Option<i32> o = Some(3)`, `show(Err(e))`. Elsewhere, such as `let x = None`, write `Option<i32>.None()`.
+* **Pointer ranges.** `p[a..b]` on a `*T` builds a `T[]` over `b - a` elements starting at `p + a`. The end is required, and only `a <= b` is checked because a pointer has no length.
+
 ---
 
 ## 8. Built-in Statements

@@ -65,7 +65,7 @@ public sealed class Monomorphizer(DiagnosticBag diagnostics)
             if (module.GenericFunctions.Count > 0 || module.GenericStructs.Count > 0 ||
                 module.GenericEnums.Count > 0)
             {
-                var expansion = new ModuleExpansion(diagnostics, module, knownTypes);
+                var expansion = new ModuleExpansion(diagnostics, module, knownTypes, modules);
                 _expansions[module] = expansion;
                 expansion.Run();
             }
@@ -104,13 +104,58 @@ public sealed class Monomorphizer(DiagnosticBag diagnostics)
         private readonly Dictionary<string, string?> _cache = new();
         private readonly Dictionary<ASTNode, int> _depths = new();
         private readonly Queue<ASTNode> _queue = new();
+        private readonly IReadOnlyList<ProgramNode> _allModules;
+        private readonly Dictionary<string, ProgramNode> _origins = new();
         private int _currentDepth;
 
-        public ModuleExpansion(DiagnosticBag diagnostics, ProgramNode module, HashSet<string> knownTypes)
+        public ModuleExpansion(
+            DiagnosticBag diagnostics, ProgramNode module, HashSet<string> knownTypes,
+            IReadOnlyList<ProgramNode> allModules)
         {
             _diagnostics = diagnostics;
             _module = module;
             _knownTypes = knownTypes;
+            _allModules = allModules;
+        }
+
+        // `pub` generics of the modules this one imports are usable here by name. They are
+        // specialized into this module, which is why their imports are added to it as well.
+        private void AddImportedTemplates()
+        {
+            foreach (var import in _module.Imports)
+            {
+                var imported = _allModules.FirstOrDefault(m =>
+                    m != _module && m.Module is not null && m.Module.PathSegments.SequenceEqual(import.PathSegments));
+
+                if (imported is null)
+                {
+                    continue;
+                }
+
+                foreach (var function in imported.GenericFunctions.Where(f => f.VisibilityModifier == VisibilityModifier.Public))
+                {
+                    if (_functionTemplates.TryAdd(function.Name, function))
+                    {
+                        _origins[function.Name] = imported;
+                    }
+                }
+
+                foreach (var structDecl in imported.GenericStructs.Where(s => s.VisibilityModifier == VisibilityModifier.Public))
+                {
+                    if (_structTemplates.TryAdd(structDecl.Name, structDecl))
+                    {
+                        _origins[structDecl.Name] = imported;
+                    }
+                }
+
+                foreach (var enumDecl in imported.GenericEnums.Where(e => e.VisibilityModifier == VisibilityModifier.Public))
+                {
+                    if (_enumTemplates.TryAdd(enumDecl.Name, enumDecl))
+                    {
+                        _origins[enumDecl.Name] = imported;
+                    }
+                }
+            }
         }
 
         public void Run()
@@ -141,6 +186,8 @@ public sealed class Monomorphizer(DiagnosticBag diagnostics)
                         $"Generic enum '{enumDecl.Name}' is already declared.", enumDecl);
                 }
             }
+
+            AddImportedTemplates();
 
             foreach (var template in _module.GenericFunctions.Concat<ASTNode>(_module.GenericStructs)
                          .Concat(_module.GenericEnums))
@@ -324,6 +371,17 @@ public sealed class Monomorphizer(DiagnosticBag diagnostics)
 
             var mangled = Mangle(name, arguments);
             _cache[key] = mangled;
+
+            if (_origins.TryGetValue(name, out var origin))
+            {
+                foreach (var import in origin.Imports)
+                {
+                    if (_module.Module is null || !_module.Module.PathSegments.SequenceEqual(import.PathSegments))
+                    {
+                        _module.AddImport(import);
+                    }
+                }
+            }
 
             ASTNode specialization;
 

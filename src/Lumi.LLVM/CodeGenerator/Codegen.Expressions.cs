@@ -21,6 +21,10 @@ public sealed partial class Codegen
             LiteralNode<double> floating => LLVMValueRef.CreateConstReal(
                 ResolveType(_semanticModel.GetExpressionType(expression)),
                 floating.Value),
+            IdentifierNode bare when _semanticModel.IsEnumConstruction(bare) =>
+                GenerateEnumConstruction(bare, bare.Name, []),
+            FunctionCallExpressionNode bareCall when _semanticModel.IsEnumConstruction(bareCall) =>
+                GenerateEnumConstruction(bareCall, bareCall.Name, bareCall.Arguments),
             IdentifierNode id => LoadVariable(id.Name),
             BinaryExpressionNode binary => GenerateBinary(binary),
             UnaryExpressionNode unary => GenerateUnary(unary),
