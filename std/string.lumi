@@ -1,7 +1,137 @@
 module std::string
 
-// Strings are immutable, NUL-terminated byte sequences. The helpers below only
-// read their arguments; none of them allocate.
+import std::vec
+import std::mem
+
+pub struct String {
+    *Arena arena
+    Vec<u8> bytes
+
+    pub func init(*String self, *Arena arena, usize initial_cap) -> bool {
+        self.arena = arena
+        if self.arena == nil {
+            return false
+        }
+        return self.bytes.init(arena, initial_cap)
+    }
+
+    pub func deinit(*String self) {
+        self.bytes.deinit()
+        self.arena = nil
+    }
+
+    pub func from(*Arena arena, string src) -> *String {
+        if arena == nil {
+            return nil
+        }
+
+        *u8 raw_struct = arena.alloc(sizeof(String), alignof(String))
+        if raw_struct == nil {
+            return nil
+        }
+
+        *String s = raw_struct as *String
+        s.arena = arena
+        if !s.bytes.init(arena, 16) {
+            return nil
+        }
+
+        i64 idx = 0
+        while true {
+            char ch = src[idx]
+            if ch as u8 == 0 {
+                break
+            }
+            if !s.bytes.push(ch as u8) {
+                return nil
+            }
+            idx = idx + 1
+        }
+
+        return s
+    }
+
+    pub func push(*String self, u8 ch) -> bool {
+        return self.bytes.push(ch)
+    }
+
+    pub func push_string(*String self, string src) -> bool {
+        i64 idx = 0
+        while true {
+            char ch = src[idx]
+            if ch as u8 == 0 {
+                break
+            }
+            if !self.bytes.push(ch as u8) {
+                return false
+            }
+            idx = idx + 1
+        }
+        return true
+    }
+
+    pub func push_str(*String self, string part) -> bool {
+        usize count = len(part) as usize
+        usize i = 0
+
+        while i < count {
+            if !self.bytes.push(part[i as i64] as u8) {
+                return false
+            }
+            i = i + 1
+        }
+        return true
+    }
+
+    pub func concat(*String self, string left, string right) -> bool {
+        self.clear()
+        if !self.push_str(left) {
+            return false
+        }
+        return self.push_str(right)
+    }
+
+    pub func clear(*String self) {
+        self.bytes.clear()
+    }
+
+    pub func as_slice(*String self) -> u8[] {
+        return self.bytes.as_slice()
+    }
+
+    pub func to_cstr(*String self) -> *u8 {
+        if self.arena == nil {
+            return nil
+        }
+
+        u8[] view = self.as_slice()
+        usize count = view.len as usize
+        *u8 raw = self.arena.alloc(count + 1, 1)
+        if raw == nil {
+            return nil
+        }
+
+        usize i = 0
+        while i < count {
+            raw[i] = view[i as i64]
+            i = i + 1
+        }
+        raw[count] = 0
+        return raw
+    }
+
+    // A string ends at its first NUL byte, but the bytes of a String are not terminated, so the
+    // result is a terminated copy in the arena (the view from to_cstr includes the NUL).
+    pub func as_string(*String self) -> string {
+        *u8 raw = self.to_cstr()
+        if raw == nil {
+            return ""
+        }
+
+        u8[] terminated = raw[0..self.bytes.len + 1]
+        return terminated as string
+    }
+}
 
 pub func empty() -> string {
     return ""

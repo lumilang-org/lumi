@@ -206,6 +206,48 @@ public sealed partial class Codegen
         _builder.BuildUnreachable();
     }
 
+    // `u8[] as string`. A string carries no length, it ends at its first NUL byte, so the slice must
+    // be empty (the empty string) or end with the NUL that terminates it; anything else could let
+    // len(s) or println read past the slice, and terminates the program instead.
+    private LLVMValueRef SliceToString(LLVMValueRef slice)
+    {
+        var bytes = _builder.BuildExtractValue(slice, 0, "str.ptr");
+        var count = _builder.BuildExtractValue(slice, 1, "str.len");
+        var zero = LLVMValueRef.CreateConstInt(_context.Int64Type, 0);
+
+        var function = _builder.InsertBlock.Parent;
+        var checkBlock = function.AppendBasicBlock("str.check");
+        var emptyBlock = function.AppendBasicBlock("str.empty");
+        var mergeBlock = function.AppendBasicBlock("str.merge");
+
+        var isEmpty = _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, count, zero, "str.is.empty");
+        _builder.BuildCondBr(isEmpty, emptyBlock, checkBlock);
+
+        _builder.PositionAtEnd(checkBlock);
+        var lastIndex = _builder.BuildSub(
+            count, LLVMValueRef.CreateConstInt(_context.Int64Type, 1), "str.last.index");
+        var lastPointer = _builder.BuildGEP2(_context.Int8Type, bytes, new[] { lastIndex }, "str.last.ptr");
+        var lastByte = _builder.BuildLoad2(_context.Int8Type, lastPointer, "str.last");
+        var terminated = _builder.BuildICmp(
+            LLVMIntPredicate.LLVMIntEQ,
+            lastByte,
+            LLVMValueRef.CreateConstInt(_context.Int8Type, 0),
+            "str.terminated");
+        EmitAbortUnless(terminated, "str.nul");
+        var checkedBlock = _builder.InsertBlock;
+        _builder.BuildBr(mergeBlock);
+
+        _builder.PositionAtEnd(emptyBlock);
+        var emptyString = _builder.BuildGlobalStringPtr("", "str.empty.lit");
+        _builder.BuildBr(mergeBlock);
+
+        _builder.PositionAtEnd(mergeBlock);
+        var result = _builder.BuildPhi(emptyString.TypeOf, "str.value");
+        result.AddIncoming([bytes], [checkedBlock], 1);
+        result.AddIncoming([emptyString], [emptyBlock], 1);
+        return result;
+    }
+
     private LLVMValueRef WidenIndex(LLVMValueRef index, string indexTypeName)
     {
         if (index.TypeOf.IntWidth >= 64)

@@ -28,7 +28,7 @@ public sealed class LlvmTypeHelper(
     {
         return typeName switch
         {
-            TypeConst.I8 or TypeConst.U8 => 8,
+            TypeConst.I8 or TypeConst.U8 or TypeConst.Char => 8,
             TypeConst.I16 or TypeConst.U16 => 16,
             TypeConst.I32 or TypeConst.U32 => 32,
             TypeConst.I64 or TypeConst.U64 => 64,

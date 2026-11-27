@@ -51,6 +51,11 @@ public sealed class SemanticModel
         _nodeTypes[node] = type;
     }
 
+    public string? TryGetType(ASTNode node)
+    {
+        return _nodeTypes.GetValueOrDefault(node);
+    }
+
     public string GetType(ASTNode node)
     {
         if (_nodeTypes.TryGetValue(node, out var type))

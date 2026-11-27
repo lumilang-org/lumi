@@ -156,6 +156,18 @@ public sealed partial class Codegen
         var sourceType = _semanticModel.GetExpressionType(cast.Operand);
         var targetType = _semanticModel.GetExpressionType(cast);
 
+        // A string is just a pointer to NUL-terminated bytes, so *u8 <-> string changes nothing.
+        if (targetType == TypeConst.String && PointerTypes.IsPointer(sourceType)
+            || sourceType == TypeConst.String && PointerTypes.IsPointer(targetType))
+        {
+            return value;
+        }
+
+        if (targetType == TypeConst.String && SliceTypes.IsSlice(sourceType))
+        {
+            return SliceToString(value);
+        }
+
         // Pointers are opaque, so pointer <-> pointer and identity casts need no instruction.
         if (sourceType == targetType || PointerTypes.IsPointer(targetType) && IsPointerOrNil(sourceType))
         {

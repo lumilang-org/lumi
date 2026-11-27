@@ -319,7 +319,9 @@ counts[idx++]--  // idx is evaluated once
 
 `expr as Type` converts explicitly. It binds tighter than any binary operator but looser than prefix operators, calls, `.` and `[]`: `*p as u64` is `(*p) as u64`, and `alloc(8) as *u64` needs no parentheses.
 
-Allowed: identity, pointer to any pointer (`*u8 as *Point`), integer to integer (truncates or sign/zero-extends by the source type), and pointer to/from `usize`. Everything else (structs by value, `bool`, `string`, float) is `LUMI1002`.
+Allowed: identity, pointer to any pointer (`*u8 as *Point`), integer to integer (truncates or sign/zero-extends by the source type), `char` to/from any integer type, pointer to/from `usize`, and `*u8` / `u8[]` to `string` (below). A `char` is an unsigned byte: `200 as char as i32` is 200, not -56, and casting a wider integer to `char` keeps the low 8 bits.
+
+**Strings from bytes.** A `string` is only a pointer to bytes that end at the first NUL, with no stored length. `p as string` (`p: *u8`) reinterprets such a pointer without checking it, and `s as *u8` goes the other way. `view as string` (`view: u8[]`) keeps the slice's pointer and checks first: an empty slice becomes `""`, and otherwise its last byte must be the NUL terminator, or the program terminates, so `len`, indexing, comparison and `println` never read past the slice. A slice of unterminated bytes, such as the contents of a `Vec<u8>`, has to be copied into a terminated buffer first (`String.as_string()` does this). Everything else (structs by value, `bool`, `string`, float) is `LUMI1002`.
 
 ### 6.5 `sizeof` and `alignof`
 

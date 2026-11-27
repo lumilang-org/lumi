@@ -257,6 +257,9 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                 foreach (var field in structDecl.Fields)
                 {
                     ValidateType(field.Type, field.Span);
+
+                    // Resolved here, in the declaring module, so users of the struct see the same type.
+                    SemanticModel.SetType(field, ResolveType(field.Type));
                 }
             }
 
@@ -1714,7 +1717,8 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
             }
         }
 
-        var declaredFields = structDecl.Fields.ToDictionary(f => f.Name, f => f.Type);
+        var declaredFields = structDecl.Fields.ToDictionary(
+            f => f.Name, f => SemanticModel.TryGetType(f) ?? f.Type);
         var seenFields = new HashSet<string>();
 
         foreach (var init in literal.Initializers)
@@ -1843,7 +1847,7 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
                 memberAccess.Span);
         }
 
-        return ResolveType(field.Type);
+        return SemanticModel.TryGetType(field) ?? ResolveType(field.Type);
     }
 
     // `None`, `Some(x)`, `Ok(x)`, `Err(e)` without the enum prefix: the variant of the built-in generic
@@ -2377,8 +2381,9 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         return TypeConst.Usize;
     }
 
-    // expr as T. Allowed: identity, pointer <-> pointer, integer <-> integer and
-    // pointer <-> usize. Everything else (structs by value, bool, string...) is rejected.
+    // expr as T. Allowed: identity, pointer <-> pointer, integer <-> integer, char <-> integer
+    // (a char is an unsigned byte), pointer <-> usize, and `*u8` / `u8[]` -> string, `string` ->
+    // `*u8`. Everything else (structs by value, bool, other strings...) is rejected.
     private string CheckCast(CastExpressionNode cast, SymbolTable scope)
     {
         var sourceType = CheckExpression(cast.Operand, scope);
@@ -2393,9 +2398,15 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
         var allowed = sourceType == targetType
                       || (PointerTypes.IsPointer(sourceType) && PointerTypes.IsPointer(targetType))
                       || (TypePromoter.IsIntegerType(sourceType) && TypePromoter.IsIntegerType(targetType))
+                      || (sourceType == TypeConst.Char && TypePromoter.IsIntegerType(targetType))
+                      || (TypePromoter.IsIntegerType(sourceType) && targetType == TypeConst.Char)
                       || (PointerTypes.IsPointer(sourceType) && targetType == TypeConst.Usize)
                       || (sourceType == TypeConst.Usize && PointerTypes.IsPointer(targetType))
-                      || (sourceType == TypeConst.Nil && PointerTypes.IsPointer(targetType));
+                      || (sourceType == TypeConst.Nil && PointerTypes.IsPointer(targetType))
+                      // A string is a pointer to NUL-terminated bytes.
+                      || (sourceType == "*u8" && targetType == TypeConst.String)
+                      || (sourceType == TypeConst.String && targetType == "*u8")
+                      || (sourceType == "u8[]" && targetType == TypeConst.String);
 
         if (!allowed)
         {
@@ -3260,7 +3271,8 @@ public sealed class TypeChecker(DiagnosticBag diagnostic)
 
     public static bool IsUnsignedInteger(string typeName)
     {
-        return typeName.StartsWith('u');
+        // A char is an unsigned byte: widening it never produces a negative number.
+        return typeName.StartsWith('u') || typeName == TypeConst.Char;
     }
 
     private void Report(

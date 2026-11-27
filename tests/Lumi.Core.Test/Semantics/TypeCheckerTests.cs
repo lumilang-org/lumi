@@ -1071,6 +1071,60 @@ func main() -> void {
     }
 
     [Test]
+    public void Check_Cast_CharAndIntegers()
+    {
+        foreach (var integer in new[] { "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize" })
+        {
+            var (_, _, toInteger) = Check($"func main() -> void {{ char c = 'a'\n {integer} x = c as {integer} }}");
+            var (_, _, toChar) = Check($"func main() -> void {{ {integer} x = 1\n char c = x as char }}");
+
+            Assert.That(toInteger.HasErrors, Is.False, integer);
+            Assert.That(toChar.HasErrors, Is.False, integer);
+        }
+
+        foreach (var source in new[]
+                 {
+                     "func main() -> void { bool b = true\n char c = b as char }",
+                     "func main() -> void { char c = 'a'\n bool b = c as bool }",
+                     "func main() -> void { char c = 'a'\n string s = c as string }",
+                     "func main() -> void { char c = 'a'\n f32 f = c as f32 }",
+                     "func main() -> void { *u8 p = nil\n char c = p as char }"
+                 })
+        {
+            var (_, _, diagnostics) = Check(source);
+            Assert.That(CountCode(diagnostics, DiagnosticCodes.TypeMismatch), Is.EqualTo(1), source);
+        }
+    }
+
+    [Test]
+    public void Check_Cast_ByteSlicesAndPointersToString()
+    {
+        foreach (var source in new[]
+                 {
+                     "func main() -> void { u8[] b = [104, 0]\n string s = b as string }",
+                     "func main() -> void { *u8 p = nil\n string s = p as string }",
+                     "func main() -> void { string s = \"x\"\n *u8 p = s as *u8 }"
+                 })
+        {
+            var (_, _, diagnostics) = Check(source);
+            Assert.That(diagnostics.HasErrors, Is.False, source);
+        }
+
+        foreach (var source in new[]
+                 {
+                     "func main() -> void { i32[] b = [1]\n string s = b as string }",
+                     "func main() -> void { u16[] b = [1]\n string s = b as string }",
+                     "func main() -> void { u8[2] b = [1, 0]\n string s = b as string }",
+                     "func main() -> void { *i32 p = nil\n string s = p as string }",
+                     "func main() -> void { string s = \"x\"\n u8[] b = s as u8[] }"
+                 })
+        {
+            var (_, _, diagnostics) = Check(source);
+            Assert.That(CountCode(diagnostics, DiagnosticCodes.TypeMismatch), Is.EqualTo(1), source);
+        }
+    }
+
+    [Test]
     public void Check_Cast_RecordsTargetType()
     {
         var (program, model, _) = Check("func main() -> void { *u8 p = nil\n *u64 a = p as *u64 }");

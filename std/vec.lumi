@@ -3,10 +3,10 @@ module std::vec
 import std::mem
 
 pub struct Vec<T> {
-    pub *Arena arena
-    pub *T buf
-    pub usize len
-    pub usize cap
+    *Arena arena
+    *T buf
+    usize len
+    usize cap
 
     pub func init(*Vec<T> self, *Arena arena, usize initial_cap) -> bool {
         self.arena = arena
@@ -94,4 +94,11 @@ pub struct Vec<T> {
         return self.buf[0..self.len]
     }
 
+    pub func clear(*Vec<T> self) {
+        self.len = 0
+    }
+
+    pub func len(*Vec<T> self) -> usize {
+        return self.len
+    }
 }

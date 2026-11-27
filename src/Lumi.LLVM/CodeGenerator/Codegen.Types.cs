@@ -207,7 +207,7 @@ public sealed partial class Codegen
             for (var i = 0; i < structNode.Fields.Count; i++)
             {
                 var field = structNode.Fields[i];
-                var layout = new StructFieldLayout(i, field.Name, field.Type, default);
+                var layout = new StructFieldLayout(i, field.Name, _semanticModel.TryGetType(field) ?? field.Type, default);
                 orderedFields.Add(layout);
                 fieldsByName[field.Name] = layout;
             }
@@ -231,10 +231,11 @@ public sealed partial class Codegen
             for (var i = 0; i < structNode.Fields.Count; i++)
             {
                 var field = structNode.Fields[i];
-                var fieldLlvmType = ResolveType(field.Type);
+                var fieldTypeName = _semanticModel.TryGetType(field) ?? field.Type;
+                var fieldLlvmType = ResolveType(fieldTypeName);
                 fieldLlvmTypes[i] = fieldLlvmType;
 
-                var layout = new StructFieldLayout(i, field.Name, field.Type, fieldLlvmType);
+                var layout = new StructFieldLayout(i, field.Name, fieldTypeName, fieldLlvmType);
                 updatedOrdered.Add(layout);
                 updatedByName[field.Name] = layout;
             }
